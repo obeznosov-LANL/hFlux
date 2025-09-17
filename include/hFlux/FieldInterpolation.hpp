@@ -58,6 +58,88 @@ void cleanDivergence(ViewType hermite_data, const double hR, const double hZ) {
       }
 }
 
+template<int m, class ViewType, class PsiViewType>
+KOKKOS_INLINE_FUNCTION
+void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const double hR, const double hZ) {
+  const int nR_hermite_data = hermite_data.extent(0);
+  const int nZ_hermite_data = hermite_data.extent(1);
+  int iR0 = nR_hermite_data / 2;
+  int iZ0 = nZ_hermite_data / 2;
+
+  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0);
+
+  auto psi = psi_hermite_data;
+
+  for (int iR = 0; iR < nR_hermite_data; ++iR)
+    for (int idR = 0; idR < 2*m+2; ++idR) {
+      for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+        // Fill Psi coefficients with local - Int BRdZ
+          psi(iR, iZ, idR, 0) = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+              psi(iR, iZ, idR, idZ) = - RBR(iR, iZ, idR, idZ - 1) * hZ / static_cast<Real>(idZ);
+          }
+        }
+        // Constant part with area from center to edges in cell iZ0
+        for (int iZ = iZ0+1; iZ < nZ_hermite_data; ++iZ) {
+          Real II = 0.0; // Integral over the entire cell
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+            II += psi(iR, iZ, idR, idZ) * (std::pow(0.5,idZ) - std::pow(-0.5,idZ));
+            psi(iR, iZ, idR, 0) += psi(iR, iZ0, idR, idZ) * std::pow( 0.5, idZ);
+            psi(iR, iZ, idR, 0) -= psi(iR, iZ,  idR, idZ) * std::pow(-0.5, idZ);
+          }
+          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
+          for (int iiZ = iZ+1; iiZ < nZ_hermite_data; ++iiZ)
+            psi(iR, iiZ, idR, 0) += II;
+        }
+        // Repeat line integration towards bottm
+        for (int iZ = 0; iZ < iZ0; ++iZ) {
+          Real II = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+            II += psi(iR, iZ, idR, idZ) * (std::pow(-0.5,idZ) - std::pow(0.5,idZ));
+            psi(iR, iZ, idR, 0) += psi(iR, iZ0, idR, idZ) * std::pow(-0.5, idZ);
+            psi(iR, iZ, idR, 0) -= psi(iR, iZ , idR, idZ) * std::pow( 0.5, idZ);
+          }
+          for (int iiZ = 0; iiZ < iZ; ++iiZ)
+            psi(iR, iiZ, idR, 0) += II;
+        }
+      }
+
+  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 2);
+
+  for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+      for (int iR = 0; iR < nR_hermite_data; ++iR) {
+        // Fill Psi coefficients with local - Int BRdZ
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+              psi(iR, iZ, idR, 0) += RBZ(iR, iZ0, idR - 1, 0) * hR / static_cast<Real>(idR);
+          }
+        }
+
+        // Constant part with area from center to edges in cell iZ0
+        for (int iR = iR0+1; iR < nR_hermite_data; ++iR) {
+          Real II = 0.0; // Integral over the entire cell
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(0.5,idR) - std::pow(-0.5,idR))* hR / static_cast<Real>(idR);
+            psi(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
+            psi(iR, iZ, 0, 0) -= RBZ(iR, iZ0,  idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+          }
+          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
+          for (int iiR = iR+1; iiR < nR_hermite_data; ++iiR)
+            psi(iiR, iZ, 0, 0) += II;
+        }
+        // Repeat line integration towards bottm
+        for (int iR = 0; iR < iR0; ++iR) {
+          Real II = 0.0;
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(-0.5, idR) - std::pow(0.5,idR))* hR / static_cast<Real>(idR);
+            psi(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+            psi(iR, iZ, 0, 0) -= RBZ(iR, iZ0 , idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
+          }
+          for (int iiR = 0; iiR < iR; ++iiR)
+            psi(iiR, iZ, 0, 0) += II;
+        }
+      }
+}
+
 template<int m, class T>
 KOKKOS_INLINE_FUNCTION
 void interpolateInPlace1D(T& data)
@@ -261,12 +343,49 @@ struct FieldInterpolation {
                 Real sclz = 1.0;
                 for (int j = 0; j < sbv.extent(1); ++j) {
                     Real mon = sclr * sclz;
-                            vals(fi, di, k, ti) += mon * sbv(i, j, fi, di, k, ti);
+                    vals(fi, di, k, ti) += mon * sbv(i, j, fi, di, k, ti);
                     sclz *= z;
                 }
                 sclr *= r;
             }
           }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+
+  template<class ViewVals, class PsiViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalPsi(ViewVals vals, Dim5 X, PsiViewType hermite_data) const {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
+    KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
+
+    for (int k = 0; k < nphi_data; ++k)
+      for (int ti = 0; ti < nt; ++ti) {
+        vals(k, ti) = 0.0;
+        Real sclr = 1.0;
+        for (int i = 0; i < sbv.extent(0); ++i) {
+            Real sclz = 1.0;
+            for (int j = 0; j < sbv.extent(1); ++j) {
+                Real mon = sclr * sclz;
+                vals(k, ti) += mon * sbv(i, j, k, ti);
+                sclz *= z;
+            }
+            sclr *= r;
+        }
+      }
 
     return ERROR_CODE::SUCCESS;
   }

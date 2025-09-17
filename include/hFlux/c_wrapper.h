@@ -25,6 +25,10 @@ extern "C" {
   void hflux_field_eval(void *fi, const int N, const double *R_mesh,
                         const double *phi_mesh, const double *Z_mesh,
                         const double *t_mesh, double *mesh_value);
+  void hflux_psi_eval(void *fi, const int N, const double *R_mesh,
+                        const double *phi_mesh, const double *Z_mesh,
+                        const double *t_mesh, double *mesh_value,
+                        double* center_R, double* center_Z);
 
   void hflux_destroy(void* fi);
 
