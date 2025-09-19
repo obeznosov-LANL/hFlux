@@ -1,5 +1,7 @@
 #pragma once
 #include <Kokkos_Core.hpp>
+#include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 #include "FiniteDifferenceWeights.hpp"
@@ -354,9 +356,10 @@ struct FieldInterpolation {
   }
 
 
-  template<class ViewVals, class PsiViewType>
+  template <class ViewType>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE evalPsi(ViewVals vals, Dim5 X, PsiViewType hermite_data) const {
+  ERROR_CODE evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const
+  {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
     int ii = static_cast<int> (floor(r / hR));
@@ -370,22 +373,92 @@ struct FieldInterpolation {
     KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
     KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
 
-    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, 0, Kokkos::ALL);
 
-    for (int k = 0; k < nphi_data; ++k)
-      for (int ti = 0; ti < nt; ++ti) {
-        vals(k, ti) = 0.0;
-        Real sclr = 1.0;
-        for (int i = 0; i < sbv.extent(0); ++i) {
-            Real sclz = 1.0;
-            for (int j = 0; j < sbv.extent(1); ++j) {
-                Real mon = sclr * sclz;
-                vals(k, ti) += mon * sbv(i, j, k, ti);
-                sclz *= z;
-            }
-            sclr *= r;
+    for (int di = 0; di < ndims; ++di) {
+      B[di] = 0.0;
+      Real sclr = 1.0;
+      for (int i = 0; i < sbv.extent(0); ++i) {
+        Real sclz = 1.0;
+        for (int j = 0; j < sbv.extent(1); ++j) {
+            Real mon = sclr * sclz;
+            B[di] += mon * (sbv(i, j, di, 0) * (1.0 - t) + sbv(i, j, di, 1) * t);
+            sclz *= z;
         }
+        sclr *= r;
       }
+      B[di] /= X[2];
+    }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+  template <class ViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalB(Dim3& B, Dim5 X, ViewType hermite_data) const
+  {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
+    KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, 0, 0);
+
+    for (int di = 0; di < ndims; ++di) {
+      B[di] = 0.0;
+      Real sclr = 1.0;
+      for (int i = 0; i < sbv.extent(0); ++i) {
+        Real sclz = 1.0;
+        for (int j = 0; j < sbv.extent(1); ++j) {
+            Real mon = sclr * sclz;
+            B[di] += mon * sbv(i, j, di);
+            sclz *= z;
+        }
+        sclr *= r;
+      }
+      B[di] /= X[2];
+    }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+  template<class PsiViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalPsi(Real& val, Dim5 X, PsiViewType hermite_data) const {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
+    KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, 0);
+
+    val = 0.0;
+    Real sclr = 1.0;
+    for (int i = 0; i < sbv.extent(0); ++i) {
+      Real sclz = 1.0;
+      for (int j = 0; j < sbv.extent(1); ++j) {
+          Real mon = sclr * sclz;
+          val += mon * sbv(i, j);
+          sclz *= z;
+      }
+      sclr *= r;
+    }
 
     return ERROR_CODE::SUCCESS;
   }
@@ -398,5 +471,89 @@ struct FieldInterpolation {
   std::array<Real, 4> getCorners() {
     return {hR0, hR0 + nR_hermite_data * hR, hZ0, hZ0 + nZ_hermite_data * hZ};
   }
+
+
+  template<class ViewType, class PsiViewType>
+  Real isd(Dim5& X0, ViewType hermite_data, PsiViewType psi_data) {
+
+      // Declare Variables
+      double tol = 1e-9; // tolerance for convergence
+      int iter = 0;
+      int max_iter = 100000; // maximum number of iterations
+
+
+      // coefficients for gradient
+      const Real alpha = 1.1; // expansion
+      const Real beta = 0.5; // contraction
+      Real ds = 0.5; // gradient variable
+      Real grad, gradx, grady, coeff;
+      Real dx, dy;
+      Real last_fit, fit;
+      Dim5 X;
+
+      bool constraint = true;
+
+      evalPsi(last_fit, X0, psi_data);
+      fit = last_fit;
+
+      //begin main loop
+      for (iter = 0; iter < max_iter; iter++) {
+          Dim3 B;
+          ERROR_CODE status = evalB(B, X0, hermite_data);
+          assert(status == SUCCESS);
+          gradx =      B[2] * X0[2];
+          grady =     -B[0] * X0[2];
+          grad = std::sqrt(gradx * gradx + grady * grady);
+
+          if (grad == 0){
+              return fit;
+          }
+
+          coeff = ds / grad; // get cauchy coefficient
+
+          X[2] = X0[2] - coeff * gradx;
+          X[4] = X0[4] - coeff * grady;
+
+          {
+              //get new fitness
+              status = evalPsi(fit, X, psi_data);
+              assert(status == SUCCESS);
+
+              if (std::abs(fit-last_fit)<= tol){
+                  return fit;
+              }
+
+              dx = X[2] - X0[2];
+              dy = X[4] - X0[4];
+
+              if (std::abs(dx) <= tol && std::abs(dy) <= tol){
+                  return fit;
+              }
+          }
+
+          // cauchy step was too big
+          if (fit > last_fit || !constraint) {
+
+              ds *= beta;
+          }
+          else {
+
+              ds *= alpha;
+              last_fit = fit;
+              X0[2] = X[2];
+              X0[4] = X[4];
+          }
+      }
+
+      if (iter == (max_iter -1)) {
+        std::fprintf(stderr,"Solution did not converge quickly enough","");
+      }
+      else {
+          return fit;
+      }
+
+      return fit; // return our best value i guess
+  }
+
 };
 

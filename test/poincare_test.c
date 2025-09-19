@@ -1,4 +1,3 @@
-
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,73 +52,40 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
 
   hflux_interpolate(fi_data, raw_field_data);
 
-  int nR_mesh = 400;
-  int nZ_mesh = 800;
-  int nphi_mesh = 1;
-  int nt_mesh = 1;
-  int N = nR_mesh * nZ_mesh * nphi_mesh * nt_mesh;
+  int n_r = 100;
+  int n_theta = 5;
+  double dr = 0.01;
+  int n_turn  = 1000;
+  int N = n_r * n_theta * (n_turn+1);
 
-  double * R_mesh = (double*) malloc(N * sizeof(double));
-  double * Z_mesh = (double*) malloc(N * sizeof(double));
-  double * phi_mesh = (double*) malloc(N * sizeof(double));
-  double * t_mesh = (double*) malloc(N * sizeof(double));
-  double * mesh_value = (double*) malloc(N * sizeof(double) * nfields * ndim);
-  double * mesh_value_psi = (double*) malloc(N * sizeof(double));
+  double * poincare_data = (double*) malloc(2*N * sizeof(double));
 
-  double eps = 1e-8;
-  double corners[4];
-  hflux_getcorners(fi_data, corners);
-  double R0_mesh = corners[0] + eps;
-  double Z0_mesh = corners[2] + eps;
-  double dR_mesh = (corners[1] - eps - (corners[0] + eps)) / (nR_mesh-1);
-  double dZ_mesh = (corners[3] - eps - (corners[2] + eps)) / (nZ_mesh-1);
-
-  for (int i = 0; i < nR_mesh; ++i)
-    for (int j = 0; j < nZ_mesh; ++j) {
-      int ii = i + j * nR_mesh;
-      R_mesh[ii] = R0_mesh + dR_mesh * i;
-      Z_mesh[ii] = Z0_mesh + dZ_mesh * j;
-      phi_mesh[ii] = 0.0;
-      t_mesh[ii] = 0.0;
-    }
+  hflux_compute_poincare(fi_data, 0.0, dr, n_r, n_theta, n_turn, poincare_data);
 
 
-  double center_R = 0.0;
-  double center_Z = 0.0;
-  hflux_field_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value);
-  hflux_psi_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value_psi, &center_R, &center_Z);
+//  l2err[0] = 0.0;
+//  l2err[1] = 0.0;
+//  l2err[2] = 0.0;
+//  for (int i = 0; i < nR_mesh; ++i)
+//    for (int j = 0; j < nZ_mesh; ++j) {
+//      int ii = i + j * nR_mesh;
+//      double R = R_mesh[ii], Z = Z_mesh[ii];
+//      int jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (0 + ndim * (0 + nphi_mesh * 0))));
+//      double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
+//      l2err[0] += pow(    -Z / q / R - mesh_value[jj], 2);
+//      jj = i + nR_mesh * (j + nZ_mesh * (0 + nphi_mesh * 0));
+//      l2err[1] += pow(log(q) / q2 * 0.5 - Psi0  - mesh_value_psi[jj], 2);
+//      jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
+//      l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
+//    }
+//
+//  l2err[0] = sqrt(l2err[0] * dR_mesh * dZ_mesh);
+//  l2err[1] = sqrt(l2err[1] * dR_mesh * dZ_mesh);
+//  l2err[2] = sqrt(l2err[2] * dR_mesh * dZ_mesh);
+//
+//  *phR = 6 * dR; // default stencil width is 7
 
-  double q_0 = 2.1 + 2.0 * (center_R - 3.0) * (center_R - 3.0) + 2.0 * center_Z * center_Z;
-  double Psi0 = log(q_0) / 2.0 * 0.5;
-
-  l2err[0] = 0.0;
-  l2err[1] = 0.0;
-  l2err[2] = 0.0;
-  for (int i = 0; i < nR_mesh; ++i)
-    for (int j = 0; j < nZ_mesh; ++j) {
-      int ii = i + j * nR_mesh;
-      double R = R_mesh[ii], Z = Z_mesh[ii];
-      int jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (0 + ndim * (0 + nphi_mesh * 0))));
-      double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
-      l2err[0] += pow(    -Z / q / R - mesh_value[jj], 2);
-      jj = i + nR_mesh * (j + nZ_mesh * (0 + nphi_mesh * 0));
-      l2err[1] += pow(log(q) / q2 * 0.5 - Psi0  - mesh_value_psi[jj], 2);
-      jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
-      l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
-    }
-
-  l2err[0] = sqrt(l2err[0] * dR_mesh * dZ_mesh);
-  l2err[1] = sqrt(l2err[1] * dR_mesh * dZ_mesh);
-  l2err[2] = sqrt(l2err[2] * dR_mesh * dZ_mesh);
-
-  *phR = 6 * dR; // default stencil width is 7
-
-  free(R_mesh);
-  free(Z_mesh);
-  free(phi_mesh);
-  free(t_mesh);
-  free(mesh_value);
-  free(mesh_value_psi);
+  free(poincare_data);
   free(raw_field_data);
   hflux_destroy(fi_data);
 }
@@ -132,7 +98,7 @@ int main(int argc, char **argv) {
 
   hflux_kokkos_init();
 
-  for (int ix = 0; ix < 5; ++ix) {
+  for (int ix = 0; ix < 1; ++ix) {
     double hR_new;
     Dim3 l2err_new;
 

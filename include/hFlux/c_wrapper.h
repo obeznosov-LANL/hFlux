@@ -20,7 +20,8 @@ extern "C" {
                               const double dr,
                               const int n_r,
                               const int n_theta,
-                              const double* poincare_data);
+                              const int n_turn,
+                              double* poincare_data);
 
   void hflux_field_eval(void *fi, const int N, const double *R_mesh,
                         const double *phi_mesh, const double *Z_mesh,
