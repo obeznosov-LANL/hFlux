@@ -87,7 +87,7 @@ void hflux_compute_poincare(
   Dim5 X = {0.0, 0.0, 3.2, 0.0, 1.0};
   Real Psi0 = (*pFi).isd(X, hermite_data_h, psi_data_h);
 
-  std::printf("Psi = %le\nX = %le %le %le %le %le\n", Psi0, X[0], X[1], X[2], X[3], X[4]);
+//  std::printf("Psi = %le\nX = %le %le %le %le %le\n", Psi0, X[0], X[1], X[2], X[3], X[4]);
 
   struct FieldLine {
     const FieldInterpolation<m> pFi;
@@ -122,7 +122,7 @@ void hflux_compute_poincare(
       auto sbv = Kokkos::subview(X_trace, i, Kokkos::ALL, it);
       Dim2 trace = {sbv(0), sbv(1)};
 
-      solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-8, 1e-9, 1e-6, 1e-9, 2000000, work);
+      solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-10, 1e-12, 1e-6, 1e-10, 2000000, work);
       sbv = Kokkos::subview(X_trace, i, Kokkos::ALL, it+1);
       sbv(0) = trace[0];
       sbv(1) = trace[1];

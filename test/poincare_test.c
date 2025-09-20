@@ -7,7 +7,7 @@
 
 typedef double Dim3[3];
 
-void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
+void run(int nR_data, int nZ_data, double* l2err) {
   void *fi_data;
 
   int nfields = 2;
@@ -62,29 +62,36 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
 
   hflux_compute_poincare(fi_data, 0.0, dr, n_r, n_theta, n_turn, poincare_data);
 
+  double * R_poincare = (double*) malloc(sizeof(double) * N);
+  double * Z_poincare = (double*) malloc(sizeof(double) * N);
+  double * phi_mesh = (double*) malloc(sizeof(double) * N);
+  double * t_mesh = (double*) malloc(sizeof(double) * N);
+  double * Psi_poincare = (double*) malloc(sizeof(double) * N);
 
-//  l2err[0] = 0.0;
-//  l2err[1] = 0.0;
-//  l2err[2] = 0.0;
-//  for (int i = 0; i < nR_mesh; ++i)
-//    for (int j = 0; j < nZ_mesh; ++j) {
-//      int ii = i + j * nR_mesh;
-//      double R = R_mesh[ii], Z = Z_mesh[ii];
-//      int jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (0 + ndim * (0 + nphi_mesh * 0))));
-//      double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
-//      l2err[0] += pow(    -Z / q / R - mesh_value[jj], 2);
-//      jj = i + nR_mesh * (j + nZ_mesh * (0 + nphi_mesh * 0));
-//      l2err[1] += pow(log(q) / q2 * 0.5 - Psi0  - mesh_value_psi[jj], 2);
-//      jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
-//      l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
-//    }
-//
-//  l2err[0] = sqrt(l2err[0] * dR_mesh * dZ_mesh);
-//  l2err[1] = sqrt(l2err[1] * dR_mesh * dZ_mesh);
-//  l2err[2] = sqrt(l2err[2] * dR_mesh * dZ_mesh);
-//
-//  *phR = 6 * dR; // default stencil width is 7
+  for (int i = 0; i < n_turn+1; ++i) {
+    for (int j = 0; j < n_r * n_theta; ++j) {
+      R_poincare[i + j * (n_turn+1)] = poincare_data[j + n_r * n_theta * (0 + 2 * i)];
+      Z_poincare[i + j * (n_turn+1)] = poincare_data[j + n_r * n_theta * (1 + 2 * i)];
+    }
+  }
 
+  double center_R, center_Z;
+
+  hflux_psi_eval(fi_data, N, R_poincare, phi_mesh, Z_poincare, t_mesh, Psi_poincare, &center_R, &center_Z);
+
+  (*l2err) = 0.0;
+  for (int j = 0; j < n_r * n_theta; ++j) {//; j < n_r * n_theta; ++j) {
+    double Psi0 = Psi_poincare[j * (n_turn+1)];
+    double r = sqrt(pow(R_poincare[j * (n_turn+1)] - 3.0, 2) + pow(Z_poincare[j * (n_turn+1)], 2));
+    (*l2err) += pow((Psi_poincare[n_turn + j * (n_turn+1)] - Psi0) * 2*M_PI * r * dr / n_theta, 2);
+  }
+  (*l2err) = sqrt(*l2err);
+
+  free(R_poincare);
+  free(Z_poincare);
+  free(t_mesh);
+  free(phi_mesh);
+  free(Psi_poincare);
   free(poincare_data);
   free(raw_field_data);
   hflux_destroy(fi_data);
@@ -92,40 +99,17 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
 
 int main(int argc, char **argv) {
   int NR = 100;
-  Dim3 l2err;
-  double hR;
-  double order = 2 * 2 + 2;
+  double l2err;
 
   hflux_kokkos_init();
 
-  for (int ix = 0; ix < 1; ++ix) {
-    double hR_new;
-    Dim3 l2err_new;
-
-    run(NR, 2*NR, &hR_new, l2err_new);
-    if (ix > 0) {
-      if (fabs(pow(l2err[0] / l2err_new[0], 1.0 / (order - 0.0))  - hR / hR_new) > 5.e-3) {
-        fprintf(stderr, "B_R interpolation did not converge with order %f\n", order);
-        fprintf(stderr, "l2err[0] =%le, l2err_new[0] = %le\n", l2err[0], l2err_new[0]);
-        hflux_kokkos_finalize();
-        return 1;
-      }
-      if (fabs(pow(l2err[1] / l2err_new[1], 1.0 / (order + 0.0)) - hR / hR_new) > 4.e-2) {
-        fprintf(stderr, "Psi interpolation did not converge with order %f\n", order + 0.0);
-        fprintf(stderr, "l2err[0] =%le, l2err_new[0] = %le\n", l2err[1], l2err_new[1]);
-        hflux_kokkos_finalize();
-        return 2;
-      }
-      if (fabs(pow(l2err[2] / l2err_new[2], 1.0 / (order - 1.0)) - hR / hR_new) > 4.e-2) {
-        fprintf(stderr, "B_Z interpolation did not converge with order %f\n", order - 1.0);
-        hflux_kokkos_finalize();
-        return 2;
-      }
+  for (int ix = 0; ix < 5; ++ix) {
+    run(NR, 2*NR, &l2err);
+    if (fabs(l2err) > 1e-8) {
+      fprintf(stderr, "Psi is not conserved %le\n", l2err);
+      hflux_kokkos_finalize();
+      return 1;
     }
-
-    memcpy(l2err, l2err_new, sizeof l2err);
-    hR = hR_new;
-
     NR *= 1.5;
   }
 
