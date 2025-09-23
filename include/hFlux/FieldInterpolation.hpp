@@ -1,9 +1,6 @@
 #pragma once
 #include <Kokkos_Core.hpp>
 #include <cmath>
-#include <iostream>
-#include <stdexcept>
-#include <vector>
 #include "FiniteDifferenceWeights.hpp"
 #include "common.hpp"
 
