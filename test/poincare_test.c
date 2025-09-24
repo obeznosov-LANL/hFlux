@@ -55,12 +55,19 @@ void run(int nR_data, int nZ_data, double* l2err) {
   int n_r = 100;
   int n_theta = 5;
   double dr = 0.01;
+  double dtheta = 2 * M_PI / (double) n_theta;
   int n_turn  = 1000;
   int N = n_r * n_theta * (n_turn+1);
 
   double * poincare_data = (double*) malloc(2*N * sizeof(double));
 
-  hflux_compute_poincare(fi_data, 0.0, dr, n_r, n_theta, n_turn, poincare_data);
+  for (int itheta = 0; itheta < n_theta; ++itheta)
+    for (int ir = 0; ir < n_r; ++ir) {
+      poincare_data[ir + itheta * n_r] = 3.0 + ir * dr * cos(itheta * dtheta);
+      poincare_data[ir + itheta * n_r + n_r * n_theta] = ir * dr * sin(itheta * dtheta);
+    }
+
+  hflux_compute_poincare(fi_data, n_r * n_theta, n_turn, poincare_data);
 
   double * R_poincare = (double*) malloc(sizeof(double) * N);
   double * Z_poincare = (double*) malloc(sizeof(double) * N);

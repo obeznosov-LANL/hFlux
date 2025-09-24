@@ -9,12 +9,12 @@ struct AnalyticField {
 
   KOKKOS_INLINE_FUNCTION
   Real q(const Real &R, const Real &Z) const {
-    return q0 + q2 * (R - R_a) * (R - R_a) + q2 * Z * Z;
+    return -q0 - q2 * (R - R_a) * (R - R_a) - q2 * Z * Z;
   }
   KOKKOS_INLINE_FUNCTION
-  Real dqR(const Real &R, const Real &Z) const { return 2.0 * q2 * (R - R_a); }
+  Real dqR(const Real &R, const Real &Z) const { return -2.0 * q2 * (R - R_a); }
   KOKKOS_INLINE_FUNCTION
-  Real dqZ(const Real &R, const Real &Z) const { return 2.0 * q2 * Z; }
+  Real dqZ(const Real &R, const Real &Z) const { return -2.0 * q2 * Z; }
 
   KOKKOS_INLINE_FUNCTION
   int operator()(const Dim5 &X, const Real &t, Dim3 &B, Dim3 &curlB,
@@ -49,7 +49,7 @@ struct AnalyticField {
   Real Psi(const Dim5 &X) const {
     const Real R = X[2];
     const Real Z = X[4];
-    return log(q(R, Z)) / q2 * 0.5;
+    return log(-q(R, Z)) / q2 * 0.5;
   }
 
 

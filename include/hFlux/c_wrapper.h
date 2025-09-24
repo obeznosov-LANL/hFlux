@@ -14,14 +14,9 @@ extern "C" {
 
   void hflux_interpolate(void *fi, double *raw_field_data);
   void hflux_getcorners(void *fi, double *corners);
+  double hflux_get_psi_extrema(void* fi, double* x, int sign);
 
-  void hflux_compute_poincare(void* fi,
-                              const double r0,
-                              const double dr,
-                              const int n_r,
-                              const int n_theta,
-                              const int n_turn,
-                              double* poincare_data);
+  void hflux_compute_poincare(void* fi, const int n_traces, const int n_turn, double* poincare_data);
 
   void hflux_field_eval(void *fi, const int N, const double *R_mesh,
                         const double *phi_mesh, const double *Z_mesh,

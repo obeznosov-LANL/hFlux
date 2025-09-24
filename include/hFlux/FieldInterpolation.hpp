@@ -471,7 +471,8 @@ struct FieldInterpolation {
 
 
   template<class ViewType, class PsiViewType>
-  Real isd(Dim5& X0, ViewType hermite_data, PsiViewType psi_data) {
+  Real isd(Dim5& X0, ViewType hermite_data, PsiViewType psi_data, int sign) {
+      assert(sign == -1 || sign == 1);
 
       // Declare Variables
       double tol = 1e-9; // tolerance for convergence
@@ -508,8 +509,8 @@ struct FieldInterpolation {
 
           coeff = ds / grad; // get cauchy coefficient
 
-          X[2] = X0[2] + coeff * gradx;
-          X[4] = X0[4] + coeff * grady;
+          X[2] = X0[2] + sign * coeff * gradx;
+          X[4] = X0[4] + sign * coeff * grady;
 
           {
               //get new fitness
@@ -529,7 +530,7 @@ struct FieldInterpolation {
           }
 
           // cauchy step was too big
-          if (fit < last_fit || !constraint) {
+          if (sign * (fit - last_fit) < 0 || !constraint) {
 
               ds *= beta;
           }

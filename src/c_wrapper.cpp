@@ -44,23 +44,9 @@ void hflux_interpolate(
     pFi->interpolate();
 }
 
-void hflux_getcorners(void* fi, double* corners) {
-    auto pFi = static_cast<FieldInterpolation<m>*>(fi);
-    auto corners_ = pFi -> getCorners();
-    for (int i = 0; i < 4; ++i) corners[i] = corners_[i];
-}
-
-
-
-void hflux_compute_poincare(
-    void* fi,
-    const double r0,
-    const double dr,
-    const int n_r,
-    const int n_theta,
-    const int n_turn,
-    double* poincare_data) {
-  const auto pFi = static_cast<FieldInterpolation<m>*>(fi);
+double hflux_get_psi_extrema(
+    void* fi, double* x, int sign) {
+  auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
   Kokkos::View<double******, ExecSpace> psi_hermite_data("psi",
       pFi->hermite_data.extent(0),
@@ -78,16 +64,33 @@ void hflux_compute_poincare(
   });
 
   Kokkos::fence();
-
-
   using HostMemSpace = Kokkos::HostSpace::memory_space;
   auto hermite_data_h = Kokkos::create_mirror_view_and_copy(HostMemSpace{}, (*pFi).hermite_data);
   auto psi_data_h = Kokkos::create_mirror_view_and_copy(HostMemSpace{}, psi_hermite_data);
 
-  Dim5 X = {0.0, 0.0, 3.2, 0.0, 1.0};
-  Real Psi0 = (*pFi).isd(X, hermite_data_h, psi_data_h);
+  Dim5 X0 = {0.0, 0.0, x[0], 0.0, x[1]};
 
-//  std::printf("Psi = %le\nX = %le %le %le %le %le\n", Psi0, X[0], X[1], X[2], X[3], X[4]);
+  double psi0 = (*pFi).isd(X0, hermite_data_h, psi_data_h, sign);
+
+  x[0] = X0[2];
+  x[1] = X0[4];
+  return psi0;
+}
+
+void hflux_getcorners(void* fi, double* corners) {
+    auto pFi = static_cast<FieldInterpolation<m>*>(fi);
+    auto corners_ = pFi -> getCorners();
+    for (int i = 0; i < 4; ++i) corners[i] = corners_[i];
+}
+
+void hflux_compute_poincare(
+    void* fi,
+    const int n_traces,
+    const int n_turn,
+    double* poincare_data) {
+  const auto pFi = static_cast<FieldInterpolation<m>*>(fi);
+
+
 
   struct FieldLine {
     const FieldInterpolation<m> pFi;
@@ -104,39 +107,30 @@ void hflux_compute_poincare(
   using DevMemSpace = Kokkos::DefaultExecutionSpace::memory_space;
 
   Kokkos::View<double***, Kokkos::LayoutLeft, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-    X_trace_h(poincare_data, n_r * n_theta, 2,  n_turn+1);
+    X_trace_h(poincare_data, n_traces, 2,  n_turn+1);
 
   auto X_trace = create_mirror_view_and_copy(DevMemSpace{}, X_trace_h);
   Kokkos::fence();
 
-  Kokkos::parallel_for("poincare", n_r * n_theta,
+  Kokkos::parallel_for("poincare", n_traces,
   KOKKOS_LAMBDA(int i){
     Kokkos::Array<Dim2, 10> work;
     FieldLine f(*pFi);
-    auto sbv = Kokkos::subview(X_trace, i, Kokkos::ALL, 0);
-    Real r = (i  % n_r) * dr;
-    Real theta = (i  / n_r) * 2 * M_PI / n_theta;
-    sbv(0) = X[2] + r * cos(theta);
-    sbv(1) = X[4] + r * sin(theta);
     for (int it = 0; it < n_turn; ++it) {
       auto sbv = Kokkos::subview(X_trace, i, Kokkos::ALL, it);
       Dim2 trace = {sbv(0), sbv(1)};
 
       solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-10, 1e-12, 1e-6, 1e-10, 2000000, work);
+
       sbv = Kokkos::subview(X_trace, i, Kokkos::ALL, it+1);
       sbv(0) = trace[0];
       sbv(1) = trace[1];
     }
   });
 
-
-
-
   Kokkos::fence();
   Kokkos::deep_copy(X_trace_h, X_trace);
 }
-
-
 
 void hflux_field_eval(
     void* fi,
