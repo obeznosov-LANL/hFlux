@@ -21,8 +21,8 @@ from scipy.interpolate import LinearNDInterpolator,CloughTocher2DInterpolator
 # from ..thirdparty.scikit-fem.skfem import *
 
 # locating the 'libsample.so' file in t  ctypes.POINTER(ctypes.c_double),
-_file = 'kinetic.so'
-_path = os.path.join(*(os.path.split('path/to/so')[:-1] + (_file, )))
+_file = 'libhflux.so'
+_path = os.path.join(*(os.path.split(os.path.abspath(__file__))[:-2] + ("lib64", _file)))
 _mod = cdll.LoadLibrary(_path)
 
 class hFieldData(Structure):

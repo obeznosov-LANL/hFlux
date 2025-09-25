@@ -55,6 +55,11 @@ install(
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/hflux
 )
 
+install(
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/hFlux.py
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/python
+)
+
 export(EXPORT hflux-targets
     FILE ${CMAKE_BINARY_DIR}/cmake/hflux-targets.cmake
     NAMESPACE hflux::
