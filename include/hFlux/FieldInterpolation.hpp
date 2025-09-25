@@ -1,7 +1,6 @@
 #pragma once
 #include <Kokkos_Core.hpp>
-#include <stdexcept>
-#include <vector>
+#include <cmath>
 #include "FiniteDifferenceWeights.hpp"
 #include "common.hpp"
 
@@ -54,6 +53,86 @@ void cleanDivergence(ViewType hermite_data, const double hR, const double hZ) {
           }
           for (int iiZ = 0; iiZ < iZ; ++iiZ)
             RBZ(iR, iiZ, idR, 0) += II;
+        }
+      }
+}
+
+template<int m, class ViewType, class PsiViewType>
+KOKKOS_INLINE_FUNCTION
+void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const double hR, const double hZ) {
+  const int nR_hermite_data = hermite_data.extent(0);
+  const int nZ_hermite_data = hermite_data.extent(1);
+  int iR0 = nR_hermite_data / 2;
+  int iZ0 = nZ_hermite_data / 2;
+
+  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0);
+
+  for (int iR = 0; iR < nR_hermite_data; ++iR)
+    for (int idR = 0; idR < 2*m+2; ++idR) {
+      for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+        // Fill Psi coefficients with local - Int BRdZ
+          psi_hermite_data(iR, iZ, idR, 0) = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+              psi_hermite_data(iR, iZ, idR, idZ) = - RBR(iR, iZ, idR, idZ - 1) * hZ / static_cast<Real>(idZ);
+          }
+        }
+        // Constant part with area from center to edges in cell iZ0
+        for (int iZ = iZ0+1; iZ < nZ_hermite_data; ++iZ) {
+          Real II = 0.0; // Integral over the entire cell
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+            II += psi_hermite_data(iR, iZ, idR, idZ) * (std::pow(0.5,idZ) - std::pow(-0.5,idZ));
+            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, iZ0, idR, idZ) * std::pow( 0.5, idZ);
+            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ,  idR, idZ) * std::pow(-0.5, idZ);
+          }
+          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
+          for (int iiZ = iZ+1; iiZ < nZ_hermite_data; ++iiZ)
+            psi_hermite_data(iR, iiZ, idR, 0) += II;
+        }
+        // Repeat line integration towards bottm
+        for (int iZ = 0; iZ < iZ0; ++iZ) {
+          Real II = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
+            II += psi_hermite_data(iR, iZ, idR, idZ) * (std::pow(-0.5,idZ) - std::pow(0.5,idZ));
+            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, iZ0, idR, idZ) * std::pow(-0.5, idZ);
+            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ , idR, idZ) * std::pow( 0.5, idZ);
+          }
+          for (int iiZ = 0; iiZ < iZ; ++iiZ)
+            psi_hermite_data(iR, iiZ, idR, 0) += II;
+        }
+      }
+
+  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 2);
+
+  for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+      for (int iR = 0; iR < nR_hermite_data; ++iR) {
+        // Fill Psi coefficients with local - Int BRdZ
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+              psi_hermite_data(iR, iZ, idR, 0) += RBZ(iR, iZ0, idR - 1, 0) * hR / static_cast<Real>(idR);
+          }
+        }
+
+        // Constant part with area from center to edges in cell iZ0
+        for (int iR = iR0+1; iR < nR_hermite_data; ++iR) {
+          Real II = 0.0; // Integral over the entire cell
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(0.5,idR) - std::pow(-0.5,idR))* hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, iZ0,  idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+          }
+          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
+          for (int iiR = iR+1; iiR < nR_hermite_data; ++iiR)
+            psi_hermite_data(iiR, iZ, 0, 0) += II;
+        }
+        // Repeat line integration towards bottm
+        for (int iR = 0; iR < iR0; ++iR) {
+          Real II = 0.0;
+          for (int idR = 1; idR < 2*m+3; ++idR) {
+            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(-0.5, idR) - std::pow(0.5,idR))* hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, iZ0 , idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
+          }
+          for (int iiR = 0; iiR < iR; ++iiR)
+            psi_hermite_data(iiR, iZ, 0, 0) += II;
         }
       }
 }
@@ -207,6 +286,8 @@ struct FieldInterpolation {
     hR(dR * (swidth - 1)), hZ(dZ * (swidth - 1)),
     data("data", nR_data, nZ_data, nfields, ndims, nphi_data, nt),
     hermite_data("hermite_data", nR_hermite_data, nZ_hermite_data, 2*m+2, 2*m+3, nfields, ndims, nphi_data, nt) {
+      std::printf("Initialized field interpolation,\n hR0 = %le, hZ0 = %le\n hR = %le, hZ = %le\n nR = %d, nZ = %d\n",
+          hR0, hZ0, hR, hZ, nR_hermite_data, nZ_hermite_data);
   };
 
   void interpolate() {
@@ -261,12 +342,120 @@ struct FieldInterpolation {
                 Real sclz = 1.0;
                 for (int j = 0; j < sbv.extent(1); ++j) {
                     Real mon = sclr * sclz;
-                            vals(fi, di, k, ti) += mon * sbv(i, j, fi, di, k, ti);
+                    vals(fi, di, k, ti) += mon * sbv(i, j, fi, di, k, ti);
                     sclz *= z;
                 }
                 sclr *= r;
             }
           }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+
+  template <class ViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const
+  {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
+    KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, 0, Kokkos::ALL);
+
+    for (int di = 0; di < ndims; ++di) {
+      B[di] = 0.0;
+      Real sclr = 1.0;
+      for (int i = 0; i < sbv.extent(0); ++i) {
+        Real sclz = 1.0;
+        for (int j = 0; j < sbv.extent(1); ++j) {
+            Real mon = sclr * sclz;
+            B[di] += mon * (sbv(i, j, di, 0) * (1.0 - t) + sbv(i, j, di, 1) * t);
+            sclz *= z;
+        }
+        sclr *= r;
+      }
+      B[di] /= X[2];
+    }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+  template <class ViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalB(Dim3& B, Dim5 X, ViewType hermite_data) const
+  {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    if (hermite_data.extent(0) <= ii || ii < 0) return WALL_IMPACT;
+    if (hermite_data.extent(1) <= jj || jj < 0) return WALL_IMPACT;
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, 0, 0);
+
+    for (int di = 0; di < ndims; ++di) {
+      B[di] = 0.0;
+      Real sclr = 1.0;
+      for (int i = 0; i < sbv.extent(0); ++i) {
+        Real sclz = 1.0;
+        for (int j = 0; j < sbv.extent(1); ++j) {
+            Real mon = sclr * sclz;
+            B[di] += mon * sbv(i, j, di);
+            sclz *= z;
+        }
+        sclr *= r;
+      }
+      B[di] /= X[2];
+    }
+
+    return ERROR_CODE::SUCCESS;
+  }
+
+  template<class PsiViewType>
+  KOKKOS_INLINE_FUNCTION
+  ERROR_CODE evalPsi(Real& val, Dim5 X, PsiViewType hermite_data) const {
+    Real r =  X[2] - hR0;
+    Real z =  X[4] - hZ0;
+    int ii = static_cast<int> (floor(r / hR));
+    int jj = static_cast<int> (floor(z / hZ));
+
+    r = r/hR - ii - 0.5;
+    z = z/hZ - jj - 0.5;
+
+    KOKKOS_ASSERT(std::abs(r) <= 0.5);
+    KOKKOS_ASSERT(std::abs(z) <= 0.5);
+    KOKKOS_ASSERT(hermite_data.extent(0) > ii && ii >= 0);
+    KOKKOS_ASSERT(hermite_data.extent(1) > jj && jj >= 0);
+
+    auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, 0);
+
+    val = 0.0;
+    Real sclr = 1.0;
+    for (int i = 0; i < sbv.extent(0); ++i) {
+      Real sclz = 1.0;
+      for (int j = 0; j < sbv.extent(1); ++j) {
+          Real mon = sclr * sclz;
+          val += mon * sbv(i, j);
+          sclz *= z;
+      }
+      sclr *= r;
+    }
 
     return ERROR_CODE::SUCCESS;
   }
@@ -279,5 +468,90 @@ struct FieldInterpolation {
   std::array<Real, 4> getCorners() {
     return {hR0, hR0 + nR_hermite_data * hR, hZ0, hZ0 + nZ_hermite_data * hZ};
   }
+
+
+  template<class ViewType, class PsiViewType>
+  Real isd(Dim5& X0, ViewType hermite_data, PsiViewType psi_data, int sign) {
+      assert(sign == -1 || sign == 1);
+
+      // Declare Variables
+      double tol = 1e-9; // tolerance for convergence
+      int iter = 0;
+      int max_iter = 100000; // maximum number of iterations
+
+
+      // coefficients for gradient
+      const Real alpha = 1.1; // expansion
+      const Real beta = 0.5; // contraction
+      Real ds = 0.5; // gradient variable
+      Real grad, gradx, grady, coeff;
+      Real dx, dy;
+      Real last_fit, fit;
+      Dim5 X;
+
+      bool constraint = true;
+
+      evalPsi(last_fit, X0, psi_data);
+      fit = last_fit;
+
+      //begin main loop
+      for (iter = 0; iter < max_iter; iter++) {
+          Dim3 B;
+          ERROR_CODE status = evalB(B, X0, hermite_data);
+          assert(status == SUCCESS);
+          gradx =      B[2] * X0[2];
+          grady =     -B[0] * X0[2];
+          grad = std::sqrt(gradx * gradx + grady * grady);
+
+          if (grad == 0){
+              return fit;
+          }
+
+          coeff = ds / grad; // get cauchy coefficient
+
+          X[2] = X0[2] + sign * coeff * gradx;
+          X[4] = X0[4] + sign * coeff * grady;
+
+          {
+              //get new fitness
+              status = evalPsi(fit, X, psi_data);
+              assert(status == SUCCESS);
+
+              if (std::abs(fit-last_fit)<= tol){
+                  return fit;
+              }
+
+              dx = X[2] - X0[2];
+              dy = X[4] - X0[4];
+
+              if (std::abs(dx) <= tol && std::abs(dy) <= tol){
+                  return fit;
+              }
+          }
+
+          // cauchy step was too big
+          if (sign * (fit - last_fit) < 0 || !constraint) {
+
+              ds *= beta;
+          }
+          else {
+
+              ds *= alpha;
+              last_fit = fit;
+              X0[2] = X[2];
+              X0[4] = X[4];
+          }
+      }
+
+      if (iter == (max_iter -1)) {
+        std::fprintf(stderr,"Solution did not converge quickly enough","");
+      }
+      else {
+          return fit;
+      }
+
+      return fit; // return our best value i guess
+  }
+
 };
 
