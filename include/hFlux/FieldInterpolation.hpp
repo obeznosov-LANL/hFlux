@@ -281,7 +281,7 @@ struct FieldInterpolation {
                      const Real R0, const Real Z0, const Real dR, const Real dZ) :
     nR_data(nR_data), nZ_data(nZ_data), nfields(nfields), nphi_data(nphi_data), nt(nt),
     R0(R0), Z0(Z0), dR(dR), dZ(dZ),
-    nR_hermite_data((nR_data-1) / swidth), nZ_hermite_data((nZ_data-1) / swidth),
+    nR_hermite_data((nR_data-1) / (swidth-1)), nZ_hermite_data((nZ_data-1) / (swidth-1)),
     hR0(R0 + (swidth-1)/2*dR), hZ0(Z0 + (swidth-1)/2 *dZ),
     hR(dR * (swidth - 1)), hZ(dZ * (swidth - 1)),
     data("data", nR_data, nZ_data, nfields, ndims, nphi_data, nt),
@@ -355,8 +355,7 @@ struct FieldInterpolation {
 
   template <class ViewType>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const
-  {
+  ERROR_CODE evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
     int ii = static_cast<int> (floor(r / hR));
