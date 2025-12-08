@@ -141,7 +141,7 @@ template<int m, class T>
 KOKKOS_INLINE_FUNCTION
 void interpolateInPlace1D(T& data)
 {
-  static_assert(data.rank == 1);
+  assert(data.rank == 1);
 
   static const int sz = m+1;
   Kokkos::Array<Kokkos::Array<Real, 2*sz>, 2*sz> NT;
