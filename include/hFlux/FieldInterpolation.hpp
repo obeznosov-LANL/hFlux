@@ -254,8 +254,6 @@ struct FieldInterpolation {
       auto data_ = data;
       auto hermite_data_ = hermite_data;
       Real ratioR = hR / dR, ratioZ = hZ / dZ;
-      const int nR_data_ = nR_data;
-      const int nZ_data_ = nZ_data;
       Kokkos::parallel_for("compute_derivatives",
       Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>({0,0,0,0,0,0}, {nR_hermite_data,nZ_hermite_data,nfields,ndims,nphi_data,nt}),
       KOKKOS_LAMBDA(int i, int j, int fi, int di, int k, int ti) {
@@ -263,9 +261,6 @@ struct FieldInterpolation {
           for (int offy = 0; offy < 2; ++offy) {
             int ii = (i + offx) * (swidth-1);
             int jj = (j + offy) * (swidth-1);
-            // Clamp to valid range to avoid out-of-bounds access
-            ii = Kokkos::min(ii, nR_data_ - swidth);
-            jj = Kokkos::min(jj, nZ_data_ - swidth);
             int idx = (m+1) * offx;
             int idy = (m+1) * offy;
 
@@ -286,7 +281,7 @@ struct FieldInterpolation {
                      const Real R0, const Real Z0, const Real dR, const Real dZ) :
     nR_data(nR_data), nZ_data(nZ_data), nfields(nfields), nphi_data(nphi_data), nt(nt),
     R0(R0), Z0(Z0), dR(dR), dZ(dZ),
-    nR_hermite_data((nR_data-1) / (swidth-1)), nZ_hermite_data((nZ_data-1) / (swidth-1)),
+    nR_hermite_data((nR_data-1) / (swidth-1) - 1), nZ_hermite_data((nZ_data-1) / (swidth-1) - 1),
     hR0(R0 + (swidth-1)/2*dR), hZ0(Z0 + (swidth-1)/2 *dZ),
     hR(dR * (swidth - 1)), hZ(dZ * (swidth - 1)),
     data("data", nR_data, nZ_data, nfields, ndims, nphi_data, nt),
