@@ -48,7 +48,7 @@ double hflux_get_psi_extrema(
     void* fi, double* x, int sign) {
   auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
-  Kokkos::View<double******, ExecSpace> psi_hermite_data("psi",
+  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
       pFi->hermite_data.extent(0),
       pFi->hermite_data.extent(1),
       pFi->hermite_data.extent(2) + 1,
@@ -94,12 +94,12 @@ void hflux_compute_poincare(
 
   struct FieldLine {
     const FieldInterpolation<m> pFi;
-    KOKKOS_INLINE_FUNCTION ERROR_CODE operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
+    KOKKOS_INLINE_FUNCTION ErrorCode operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
       Dim3 B_;
       pFi.evalB(B_, {0.0, 0.0, X[0], phi, X[1]}, pFi.hermite_data);
       dXdphi[0] = (B_[0]) / B_[1] * X[0];
       dXdphi[1] = (B_[2]) / B_[1] * X[0];
-      return ERROR_CODE::SUCCESS;
+      return ErrorCode::Success;
     }
     typedef Dim2 value_type;
   };
@@ -204,7 +204,7 @@ void hflux_psi_eval(
   MeshValueView Psi_h(mesh_value, N, pFi->nphi_data, pFi->nt);
   auto Psi = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, Psi_h);
 
-  Kokkos::View<double******, ExecSpace> psi_hermite_data("psi",
+  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
       pFi->hermite_data.extent(0),
       pFi->hermite_data.extent(1),
       pFi->hermite_data.extent(2) + 1,

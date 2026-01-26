@@ -66,7 +66,7 @@ void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
   Real dR_pl = (corners[1] - eps - (corners[0] + eps)) / (nR_pl-1);
   Real dZ_pl = (corners[3] - eps - (corners[2] + eps)) / (nZ_pl-1);
 
-  Kokkos::View<Real******, ExecSpace> view_pl("plot", nR_pl, nZ_pl, nfields, 3, nphi_data, nt);
+  Kokkos::View<Real******, Kokkos::LayoutLeft, ExecSpace> view_pl("plot", nR_pl, nZ_pl, nfields, 3, nphi_data, nt);
 
   l2err = {};
   Kokkos::parallel_reduce("eval",

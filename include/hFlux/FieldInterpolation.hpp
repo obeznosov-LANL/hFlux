@@ -243,8 +243,8 @@ struct FieldInterpolation {
   const Real hR0, hZ0;
   const Real hR, hZ;
 
-  Kokkos::View<Real******, ExecSpace> data;
-  Kokkos::View<Real********, ExecSpace> hermite_data;
+  Kokkos::View<Real******, Kokkos::LayoutLeft, ExecSpace> data;
+  Kokkos::View<Real********, Kokkos::LayoutLeft, ExecSpace> hermite_data;
 
 
 
@@ -254,6 +254,8 @@ struct FieldInterpolation {
       auto data_ = data;
       auto hermite_data_ = hermite_data;
       Real ratioR = hR / dR, ratioZ = hZ / dZ;
+      const int nR_data_ = nR_data;
+      const int nZ_data_ = nZ_data;
       Kokkos::parallel_for("compute_derivatives",
       Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>({0,0,0,0,0,0}, {nR_hermite_data,nZ_hermite_data,nfields,ndims,nphi_data,nt}),
       KOKKOS_LAMBDA(int i, int j, int fi, int di, int k, int ti) {
@@ -261,6 +263,9 @@ struct FieldInterpolation {
           for (int offy = 0; offy < 2; ++offy) {
             int ii = (i + offx) * (swidth-1);
             int jj = (j + offy) * (swidth-1);
+            // Clamp to valid range to avoid out-of-bounds access
+            ii = Kokkos::min(ii, nR_data_ - swidth);
+            jj = Kokkos::min(jj, nZ_data_ - swidth);
             int idx = (m+1) * offx;
             int idy = (m+1) * offy;
 
@@ -315,7 +320,7 @@ struct FieldInterpolation {
 
   template<class ViewVals>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE operator()(ViewVals vals, Dim5 X) const
+  ErrorCode operator()(ViewVals vals, Dim5 X) const
   {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
@@ -349,13 +354,13 @@ struct FieldInterpolation {
             }
           }
 
-    return ERROR_CODE::SUCCESS;
+    return ErrorCode::Success;
   }
 
 
   template <class ViewType>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const {
+  ErrorCode evalB(Dim3& B, Dim5 X, Real t, ViewType hermite_data) const {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
     int ii = static_cast<int> (floor(r / hR));
@@ -386,12 +391,12 @@ struct FieldInterpolation {
       B[di] /= X[2];
     }
 
-    return ERROR_CODE::SUCCESS;
+    return ErrorCode::Success;
   }
 
   template <class ViewType>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE evalB(Dim3& B, Dim5 X, ViewType hermite_data) const
+  ErrorCode evalB(Dim3& B, Dim5 X, ViewType hermite_data) const
   {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
@@ -403,8 +408,8 @@ struct FieldInterpolation {
 
     KOKKOS_ASSERT(std::abs(r) <= 0.5);
     KOKKOS_ASSERT(std::abs(z) <= 0.5);
-    if (hermite_data.extent(0) <= ii || ii < 0) return WALL_IMPACT;
-    if (hermite_data.extent(1) <= jj || jj < 0) return WALL_IMPACT;
+    if (hermite_data.extent(0) <= ii || ii < 0) return ErrorCode::WallImpact;
+    if (hermite_data.extent(1) <= jj || jj < 0) return ErrorCode::WallImpact;
 
     auto sbv = Kokkos::subview(hermite_data, ii, jj, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, 0, 0);
 
@@ -423,12 +428,12 @@ struct FieldInterpolation {
       B[di] /= X[2];
     }
 
-    return ERROR_CODE::SUCCESS;
+    return ErrorCode::Success;
   }
 
   template<class PsiViewType>
   KOKKOS_INLINE_FUNCTION
-  ERROR_CODE evalPsi(Real& val, Dim5 X, PsiViewType hermite_data) const {
+  ErrorCode evalPsi(Real& val, Dim5 X, PsiViewType hermite_data) const {
     Real r =  X[2] - hR0;
     Real z =  X[4] - hZ0;
     int ii = static_cast<int> (floor(r / hR));
@@ -456,7 +461,7 @@ struct FieldInterpolation {
       sclr *= r;
     }
 
-    return ERROR_CODE::SUCCESS;
+    return ErrorCode::Success;
   }
 
 
@@ -496,8 +501,8 @@ struct FieldInterpolation {
       //begin main loop
       for (iter = 0; iter < max_iter; iter++) {
           Dim3 B;
-          ERROR_CODE status = evalB(B, X0, hermite_data);
-          assert(status == SUCCESS);
+          ErrorCode status = evalB(B, X0, hermite_data);
+          assert(status == ErrorCode::Success);
           gradx =      B[2] * X0[2];
           grady =     -B[0] * X0[2];
           grad = std::sqrt(gradx * gradx + grady * grady);
@@ -514,7 +519,7 @@ struct FieldInterpolation {
           {
               //get new fitness
               status = evalPsi(fit, X, psi_data);
-              assert(status == SUCCESS);
+              assert(status == ErrorCode::Success);
 
               if (std::abs(fit-last_fit)<= tol){
                   return fit;

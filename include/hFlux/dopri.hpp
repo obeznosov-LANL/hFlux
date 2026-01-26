@@ -21,7 +21,7 @@
  * component.
  */
 template <class System>
-KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
+KOKKOS_INLINE_FUNCTION ErrorCode dopri5_step(
     const System &f, const double t, const typename System::value_type &y, double h,
     typename System::value_type &yout, typename System::value_type &yerr,
     Kokkos::Array<typename System::value_type, 10> &k) {
@@ -55,29 +55,29 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
   const size_t n = y.size();
 
   // 1) k[1] = f(t, y)
-  ERROR_CODE st = f(t, y, k[1]);
-  if (st != SUCCESS)
+  ErrorCode st = f(t, y, k[1]);
+  if (st != ErrorCode::Success)
     return st;
 
   // 2) k[2] = f(t + c2*h, y + h*(a21*k[1]))
   for (int i = 0; i < n; ++i)
     k[0][i] = y[i] + h * a21 * k[1][i];
   st = f(t + c2 * h, k[0], k[2]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 3) k[3]
   for (int i = 0; i < n; ++i)
     k[0][i] = y[i] + h * (a31 * k[1][i] + a32 * k[2][i]);
   st = f(t + c3 * h, k[0], k[3]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 4) k[4]
   for (int i = 0; i < n; ++i)
     k[0][i] = y[i] + h * (a41 * k[1][i] + a42 * k[2][i] + a43 * k[3][i]);
   st = f(t + c4 * h, k[0], k[4]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 5) k[5]
@@ -85,7 +85,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = y[i] + h * (a51 * k[1][i] + a52 * k[2][i] + a53 * k[3][i] +
                           a54 * k[4][i]);
   st = f(t + c5 * h, k[0], k[5]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 6) k[6]
@@ -93,7 +93,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = y[i] + h * (a61 * k[1][i] + a62 * k[2][i] + a63 * k[3][i] +
                           a64 * k[4][i] + a65 * k[5][i]);
   st = f(t + c6 * h, k[0], k[6]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 7) k[7]
@@ -101,7 +101,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = y[i] + h * (a71 * k[1][i] + a72 * k[2][i] + a73 * k[3][i] +
                           a74 * k[4][i] + a75 * k[5][i] + a76 * k[6][i]);
   st = f(t + c7 * h, k[0], k[7]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // Compute 5th-order update and 4th-order (embedded) update
@@ -115,11 +115,11 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     yerr[i] = h * (dy5 - dy4); // local error estimate in each component
   }
 
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 template <class System, typename ViewType>
-KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
+KOKKOS_INLINE_FUNCTION ErrorCode dopri5_step(
     const System &f, const double t, const int idx, const ViewType& v, const double h,
     typename System::value_type &yout, typename System::value_type &yerr,
     Kokkos::Array<typename System::value_type, 10> &k) {
@@ -154,28 +154,28 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
 
   // 1) k[1] = f(t, y)
   ERROR_CODE st = f(t, idx, v, k[1]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 2) k[2] = f(t + c2*h, y + h*(a21*k[1]))
   for (int i = 0; i < n; ++i)
     k[0][i] = v(idx, i) + h * a21 * k[1][i];
   st = f(t + c2 * h, k[0], k[2]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 3) k[3]
   for (int i = 0; i < n; ++i)
     k[0][i] = v(idx, i) + h * (a31 * k[1][i] + a32 * k[2][i]);
   st = f(t + c3 * h, k[0], k[3]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 4) k[4]
   for (int i = 0; i < n; ++i)
     k[0][i] = v(idx, i) + h * (a41 * k[1][i] + a42 * k[2][i] + a43 * k[3][i]);
   st = f(t + c4 * h, k[0], k[4]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 5) k[5]
@@ -183,7 +183,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = v(idx, i) + h * (a51 * k[1][i] + a52 * k[2][i] + a53 * k[3][i] +
                           a54 * k[4][i]);
   st = f(t + c5 * h, k[0], k[5]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 6) k[6]
@@ -191,7 +191,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = v(idx, i) + h * (a61 * k[1][i] + a62 * k[2][i] + a63 * k[3][i] +
                           a64 * k[4][i] + a65 * k[5][i]);
   st = f(t + c6 * h, k[0], k[6]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // 7) k[7]
@@ -199,7 +199,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     k[0][i] = v(idx, i) + h * (a71 * k[1][i] + a72 * k[2][i] + a73 * k[3][i] +
                           a74 * k[4][i] + a75 * k[5][i] + a76 * k[6][i]);
   st = f(t + c7 * h, k[0], k[7]);
-  if (st != SUCCESS)
+  if (st != ErrorCode::Success)
     return st;
 
   // Compute 5th-order update and 4th-order (embedded) update
@@ -213,7 +213,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
     yerr[i] = h * (dy5 - dy4); // local error estimate in each component
   }
 
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 /**
@@ -233,7 +233,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE dopri5_step(
  */
 
 template <class System, typename T, bool VERBOSE = false>
-KOKKOS_INLINE_FUNCTION ERROR_CODE
+KOKKOS_INLINE_FUNCTION ErrorCode
 solve_dopri5(const System &f, typename System::value_type &y, const double t0,
              const double tf, const T rtol, const T atol, double h, const double hmin, const int nmax,
              Kokkos::Array<typename System::value_type, 10> &work) {
@@ -268,7 +268,7 @@ solve_dopri5(const System &f, typename System::value_type &y, const double t0,
       break;
     }
     if (std::fabs(h) < hmin) {
-      return H_BELOW_MIN;
+      return ErrorCode::HBelowMin;
     }
     if (t + h > tf) {
       // Don’t overshoot tf
@@ -276,8 +276,8 @@ solve_dopri5(const System &f, typename System::value_type &y, const double t0,
     }
 
     // 1) Take a trial step
-    ERROR_CODE st = dopri5_step(f, t, y, h, ytemp, yerr, work);
-    if (st != SUCCESS)
+    ErrorCode st = dopri5_step(f, t, y, h, ytemp, yerr, work);
+    if (st != ErrorCode::Success)
       return st;
 
     // 2) Estimate error norm
@@ -320,11 +320,11 @@ solve_dopri5(const System &f, typename System::value_type &y, const double t0,
       }
     }
   }
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 template <class System, typename T, typename ViewType, bool VERBOSE = false>
-KOKKOS_INLINE_FUNCTION ERROR_CODE
+KOKKOS_INLINE_FUNCTION ErrorCode
 solve_dopri5(const System &f, const int idx, ViewType & v, const double t0,
              const double tf, const T rtol, const T atol, double h, const double hmin, const int nmax,
              Kokkos::Array<typename System::value_type, 10> &work) {
@@ -359,7 +359,7 @@ solve_dopri5(const System &f, const int idx, ViewType & v, const double t0,
       break;
     }
     if (std::fabs(h) < hmin) {
-      return H_BELOW_MIN;
+      return ErrorCode::HBelowMin;
     }
     if (t + h > tf) {
       // Don’t overshoot tf
@@ -367,8 +367,8 @@ solve_dopri5(const System &f, const int idx, ViewType & v, const double t0,
     }
 
     // 1) Take a trial step
-    ERROR_CODE st = dopri5_step(f, t, idx, v, h, ytemp, yerr, work);
-    if (st != SUCCESS)
+    ErrorCode st = dopri5_step(f, t, idx, v, h, ytemp, yerr, work);
+    if (st != ErrorCode::Success)
       return st;
 
     // 2) Estimate error norm
@@ -412,11 +412,11 @@ solve_dopri5(const System &f, const int idx, ViewType & v, const double t0,
       }
     }
   }
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 template <class System, bool VERBOSE = false>
-KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
+KOKKOS_INLINE_FUNCTION ErrorCode solve_dopri5_fixed(
     const System &f, typename System::value_type &y, const double t0, const double tf,
     double h,
     Kokkos::Array<typename System::value_type, 10> &work)
@@ -433,9 +433,9 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
     if (stepCount == nmax - 1)
       h = tf - t;
     // Take a single RK4 step
-    ERROR_CODE st = dopri5_step(f, t, y, h, ytemp, yerr, work);
+    ErrorCode st = dopri5_step(f, t, y, h, ytemp, yerr, work);
     y = ytemp;
-    if (st != SUCCESS)
+    if (st != ErrorCode::Success)
       return st;
 
     // Accept the step
@@ -449,11 +449,11 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
     }
   }
 
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 template <class System, typename ViewType, bool VERBOSE = false>
-KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
+KOKKOS_INLINE_FUNCTION ErrorCode solve_dopri5_fixed(
     const System &f, const int idx, ViewType &v, const double t0, const double tf,
     double h,
     Kokkos::Array<typename System::value_type, 10> &work)
@@ -469,10 +469,10 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
     if (stepCount == nmax - 1)
       h = tf - t;
     // Take a single RK4 step
-    ERROR_CODE st = dopri5_step(f, t, idx, v, h, ytemp, yerr, work);
+    ErrorCode st = dopri5_step(f, t, idx, v, h, ytemp, yerr, work);
     for (int i = 0; i < n; ++i)
       v(idx, i) = ytemp[i];
-    if (st != SUCCESS)
+    if (st != ErrorCode::Success)
       return st;
 
     // Accept the step
@@ -486,7 +486,7 @@ KOKKOS_INLINE_FUNCTION ERROR_CODE solve_dopri5_fixed(
     }
   }
 
-  return SUCCESS;
+  return ErrorCode::Success;
 }
 
 #endif // DOPRI5_HPP
