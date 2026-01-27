@@ -69,10 +69,10 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   double eps = 1e-8;
   double corners[4];
   hflux_getcorners(fi_data, corners);
-  double R0_mesh = corners[0];
-  double Z0_mesh = corners[2];
-  double dR_mesh = (corners[1] - eps - corners[0]) / (nR_mesh-1);
-  double dZ_mesh = (corners[3] - eps - corners[2]) / (nZ_mesh-1);
+  double R0_mesh = corners[0] + eps;
+  double Z0_mesh = corners[2] + eps;
+  double dR_mesh = (corners[1] - 2*eps - corners[0]) / (nR_mesh-1);
+  double dZ_mesh = (corners[3] - 2*eps - corners[2]) / (nZ_mesh-1);
 
   for (int i = 0; i < nR_mesh; ++i)
     for (int j = 0; j < nZ_mesh; ++j) {
@@ -95,6 +95,9 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   l2err[0] = 0.0;
   l2err[1] = 0.0;
   l2err[2] = 0.0;
+
+  FILE* file = fopen("psi.txt", "w");
+
   for (int i = 0; i < nR_mesh; ++i)
     for (int j = 0; j < nZ_mesh; ++j) {
       int ii = i + j * nR_mesh;
@@ -102,11 +105,17 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
       int jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (0 + ndim * (0 + nphi_mesh * 0))));
       double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
       l2err[0] += pow(    -Z / q / R - mesh_value[jj], 2);
+
       jj = i + nR_mesh * (j + nZ_mesh * (0 + nphi_mesh * 0));
       l2err[1] += pow(log(q) / q2 * 0.5 - Psi0  - mesh_value_psi[jj], 2);
+
+      fprintf(file, "%20.14le %20.14le %20.14le %20.14le\n",
+          R, Z, log(q) / q2 * 0.5 - Psi0, mesh_value_psi[jj]);
+
       jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
       l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
     }
+  fclose(file);
 
   double q = 2.1 + 2.0 * (R0_mesh - 3.0) * (R0_mesh - 3.0) + 2.0 * Z0_mesh * Z0_mesh;
   printf("%20.14le\n", mesh_value_psi[0]);

@@ -58,75 +58,100 @@ void cleanDivergence(ViewType hermite_data, const double hR, const double hZ) {
 }
 
 template<int m, class ViewType, class PsiViewType>
-KOKKOS_INLINE_FUNCTION
 void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const double hR, const double hZ) {
-  const int nR_hermite_data = hermite_data.extent(0);
-  const int nZ_hermite_data = hermite_data.extent(1);
-  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0);
 
-  for (int iR = 0; iR < nR_hermite_data; ++iR)
-    for (int idR = 0; idR < 2*m+2; ++idR) {
-      for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
-        // Fill Psi coefficients with local - Int BRdZ
-          psi_hermite_data(iR, iZ, idR, 0) = 0.0;
-          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
-            psi_hermite_data(iR, iZ, idR, idZ) = - RBR(iR, iZ, idR, idZ - 1) * hZ / static_cast<Real>(idZ);
-            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ,  idR, idZ) * std::pow(-0.5, idZ);
+  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, 0, Kokkos::ALL, Kokkos::ALL, 0, 0, Kokkos::ALL, Kokkos::ALL);
+  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0, 2, Kokkos::ALL, Kokkos::ALL);
+
+  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> intZ_RBR(
+      "intZ_RBR", hermite_data.extent(0), hermite_data.extent(1), 2*m+3, 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
+  Kokkos::View<double****, Kokkos::LayoutLeft, ExecSpace> intR_RBZ(
+      "intR_RBZ", hermite_data.extent(0), 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
+
+  {
+    int a = hermite_data.extent(0), b = hermite_data.extent(1), c = 2*m+2, f = 2*m+3, d = hermite_data.extent(6),
+        e = hermite_data.extent(7);
+    using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>;
+    Kokkos::parallel_for("IntegrateZ",
+        Policy({0, 0, 0, 1, 0, 0}, {a, b, c, f, d, e}),
+        KOKKOS_LAMBDA(int i, int j, int idR, int idZ, int k, int l) {
+          intZ_RBR(i, j, idR, idZ, k, l) = RBR(i, j, idR, idZ - 1, k, l) * hZ / static_cast<Real>(idZ);
+        });
+  }
+
+  {
+    using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<4>>;
+    Kokkos::parallel_for("IntegrateR",
+        Policy({0, 1, 0, 0}, {hermite_data.extent(0), 2*m+3,
+                             hermite_data.extent(6), hermite_data.extent(7)}),
+        KOKKOS_LAMBDA(int i, int idR, int k, int l) {
+          intR_RBZ(i, idR, k, l) = 0.0;
+          for (int idZ = 0; idZ < 2*m+2; ++idZ) {
+            intR_RBZ(i, idR, k, l) += RBZ(i, 0, idR-1, idZ, k, l) * hR / static_cast<Real>(idR) * Kokkos::pow(-0.5, idZ);
           }
-        }
-        // Constant part with area from center to edges in cell iZ0
-        for (int iZ = 1; iZ < nZ_hermite_data; ++iZ) {
-          Real II = 0.0; // Integral over the entire cell
-          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
-            II += psi_hermite_data(iR, iZ, idR, idZ) * (std::pow(0.5,idZ) - std::pow(-0.5,idZ));
-            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, 0, idR, idZ) * std::pow( 0.5, idZ);
+        });
+  }
+  Kokkos::fence();
+
+  Kokkos::View<double*****, Kokkos::LayoutLeft, ExecSpace> intZ_RBR_Cell(
+      "intZ_RBR_Cell", hermite_data.extent(0), hermite_data.extent(1), 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
+  Kokkos::View<double***, Kokkos::LayoutLeft, ExecSpace> intR_RBZ_Cell(
+      "intR_RBZ_Cell", hermite_data.extent(0), hermite_data.extent(6), hermite_data.extent(7));
+
+  {
+    using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<5>>;
+    Kokkos::parallel_for("IntegrateZ",
+        Policy({0, 0, 0, 0, 0}, {hermite_data.extent(0), hermite_data.extent(1),
+                             2*m+2,
+                             hermite_data.extent(6), hermite_data.extent(7)}),
+        KOKKOS_LAMBDA(int i, int j, int idR, int k, int l) {
+          intZ_RBR_Cell(i, j, idR, k, l) = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; idZ += 2)
+            intZ_RBR_Cell(i, j, idR, k, l) += intZ_RBR(i, j, idR, idZ, k, l) * 2.0 * Kokkos::pow(0.5, idZ);
+          intZ_RBR(i, j, idR, 0, k, l) = 0.0;
+          for (int idZ = 1; idZ < 2*m+3; ++idZ)
+            intZ_RBR(i, j, idR, 0, k, l) -= intZ_RBR(i, j, idR, idZ, k, l) * Kokkos::pow(-0.5, idZ);
+        });
+  }
+
+  {
+    using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<3>>;
+    Kokkos::parallel_for("IntegrateR",
+        Policy({0, 1, 0, 0}, {hermite_data.extent(0), 2*m+3,
+                             hermite_data.extent(6), hermite_data.extent(7)}),
+        KOKKOS_LAMBDA(int i, int k, int l) {
+          intR_RBZ_Cell(i, k, l) = 0.0;
+          for (int idR = 1; idR < 2*m+3; idR += 2) {
+            intR_RBZ_Cell(i, k, l) += intR_RBZ(i, idR, k, l) * 2.0 * Kokkos::pow(0.5, idR);
           }
-          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
-          for (int iiZ = iZ+1; iiZ < nZ_hermite_data; ++iiZ)
-            psi_hermite_data(iR, iiZ, idR, 0) += II;
-        }
-      }
-
-  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 2);
-
-  for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
-      for (int iR = 0; iR < nR_hermite_data; ++iR) {
-        // Fill Psi coefficients with local - Int BRdZ
+          intR_RBZ(i, 0, k, l) = 0.0;
           for (int idR = 1; idR < 2*m+3; ++idR) {
-            psi_hermite_data(iR, iZ, idR, 0) += RBZ(iR, 0, idR - 1, 0) * hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, 0,  idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+            intR_RBZ(i, 0, k, l) -= intR_RBZ(i, idR, k, l) * Kokkos::pow(-0.5, idR);
           }
-        }
+        });
+  }
 
-        // Constant part with area from center to edges in cell iZ0
-        for (int iR = 1; iR < nR_hermite_data; ++iR) {
-          Real II = 0.0; // Integral over the entire cell
-          for (int idR = 1; idR < 2*m+3; ++idR) {
-            II += RBZ(iR, 0, idR-1, 0) * (std::pow(0.5,idR) - std::pow(-0.5,idR))* hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) += RBZ(0, 0, idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
-          }
-          // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
-          for (int iiR = iR+1; iiR < nR_hermite_data; ++iiR)
-            psi_hermite_data(iiR, iZ, 0, 0) += II;
-        }
-      }
-//  // Find minimum and subtract so that function is never zero
-//  Real min_psi0 = 0.0;
-//  for (int iR = 0; iR < nR_hermite_data; ++iR) {
-//    for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
-//      if ( min_psi0 > psi_hermite_data(iR, iZ, 0, 0) ) {
-//        min_psi0 = psi_hermite_data(iR, iZ, 0, 0);
-//      }
-//    }
-//  }
-//
-//  for (int iR = 0; iR < nR_hermite_data; ++iR) {
-//    for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
-//      if ( min_psi0 > psi_hermite_data(iR, iZ, 0, 0) ) {
-//        psi_hermite_data(iR, iZ, 0, 0) -= min_psi0;
-//      }
-//    }
-//  }
+  Kokkos::fence();
+
+  {
+    using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>;
+    Kokkos::parallel_for("Compute psi",
+        Policy({0, 0, 0, 0, 0, 0}, {hermite_data.extent(0), hermite_data.extent(1),
+                             2*m+3, 2*m+3,
+                             hermite_data.extent(6), hermite_data.extent(7)}),
+        KOKKOS_LAMBDA(int i, int j, int idR, int idZ, int k, int l) {
+          psi_hermite_data(i,j,idR,idZ,k,l) = - intZ_RBR(i, j, idR, idZ, k, l) + intR_RBZ(i, idR, k, l);
+          if (idR == 0)
+            for (int ii = 0; ii < i; ++i)
+              psi_hermite_data(i, j, 0, idZ, k, l) += intR_RBZ_Cell(ii, k, l);
+          if (idZ == 0)
+            for (int jj = 0; jj < j; ++j)
+              psi_hermite_data(i, j, idR, 0, k, l) += intZ_RBR_Cell(i, jj, idR, k, l);
+        });
+  }
+
+  Kokkos::fence();
+
 
 }
 

@@ -55,15 +55,8 @@ double hflux_get_psi_extrema(
       pFi->hermite_data.extent(3),
       pFi->hermite_data.extent(6),
       pFi->hermite_data.extent(7));
-  Kokkos::parallel_for("psi_compute",
-  Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<2>>({0,0}, {pFi->nphi_data,pFi->nt}),
-  KOKKOS_LAMBDA(int k, int ti){
-    auto sbv_hermite_data = Kokkos::subview((*pFi).hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0, Kokkos::ALL, k, ti);
-    auto sbv_psi_data = Kokkos::subview(psi_hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, k, ti);
-    computeFlux<m>(sbv_hermite_data, sbv_psi_data, (*pFi).hR, (*pFi).hZ);
-  });
+  computeFlux<m>(pFi->hermite_data, psi_hermite_data, (*pFi).hR, (*pFi).hZ);
 
-  Kokkos::fence();
   using HostMemSpace = Kokkos::HostSpace::memory_space;
   auto hermite_data_h = Kokkos::create_mirror_view_and_copy(HostMemSpace{}, (*pFi).hermite_data);
   auto psi_data_h = Kokkos::create_mirror_view_and_copy(HostMemSpace{}, psi_hermite_data);
