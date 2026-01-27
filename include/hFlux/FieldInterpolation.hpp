@@ -60,20 +60,22 @@ void cleanDivergence(ViewType hermite_data, const double hR, const double hZ) {
 template<int m, class ViewType, class PsiViewType>
 void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const double hR, const double hZ) {
 
-  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, 0, Kokkos::ALL, Kokkos::ALL, 0, 0, Kokkos::ALL, Kokkos::ALL);
-  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0, 2, Kokkos::ALL, Kokkos::ALL);
+  int order = 2*m+2;
+  int nR = hermite_data.extent(0);
+  int nZ = hermite_data.extent(1);
+  int nphi = hermite_data.extent(6);
+  int nt = hermite_data.extent(7);
 
-  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> intZ_RBR(
-      "intZ_RBR", hermite_data.extent(0), hermite_data.extent(1), 2*m+3, 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
-  Kokkos::View<double****, Kokkos::LayoutLeft, ExecSpace> intR_RBZ(
-      "intR_RBZ", hermite_data.extent(0), 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
+  auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0, 0, Kokkos::ALL, Kokkos::ALL);
+  auto RBZ = Kokkos::subview(hermite_data, Kokkos::ALL, 0, Kokkos::ALL, Kokkos::ALL, 0, 2, Kokkos::ALL, Kokkos::ALL);
+
+  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> intZ_RBR("intZ_RBR", nR, nZ, order+1, order+1, nphi, nt);
+  Kokkos::View<double****, Kokkos::LayoutLeft, ExecSpace> intR_RBZ("intR_RBZ", nR, order+1, nphi, nt);
 
   {
-    int a = hermite_data.extent(0), b = hermite_data.extent(1), c = 2*m+2, f = 2*m+3, d = hermite_data.extent(6),
-        e = hermite_data.extent(7);
     using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>;
     Kokkos::parallel_for("IntegrateZ",
-        Policy({0, 0, 0, 1, 0, 0}, {a, b, c, f, d, e}),
+        Policy({0, 0, 0, 1, 0, 0}, {nR, nZ, order, order+1, nphi, nt}),
         KOKKOS_LAMBDA(int i, int j, int idR, int idZ, int k, int l) {
           intZ_RBR(i, j, idR, idZ, k, l) = RBR(i, j, idR, idZ - 1, k, l) * hZ / static_cast<Real>(idZ);
         });
@@ -82,28 +84,23 @@ void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const doub
   {
     using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<4>>;
     Kokkos::parallel_for("IntegrateR",
-        Policy({0, 1, 0, 0}, {hermite_data.extent(0), 2*m+3,
-                             hermite_data.extent(6), hermite_data.extent(7)}),
+        Policy({0, 1, 0, 0}, {nR, order+1, nphi, nt}),
         KOKKOS_LAMBDA(int i, int idR, int k, int l) {
           intR_RBZ(i, idR, k, l) = 0.0;
           for (int idZ = 0; idZ < 2*m+2; ++idZ) {
-            intR_RBZ(i, idR, k, l) += RBZ(i, 0, idR-1, idZ, k, l) * hR / static_cast<Real>(idR) * Kokkos::pow(-0.5, idZ);
+            intR_RBZ(i, idR, k, l) += RBZ(i, idR-1, idZ, k, l) * hR / static_cast<Real>(idR) * Kokkos::pow(-0.5, idZ);
           }
         });
   }
   Kokkos::fence();
 
-  Kokkos::View<double*****, Kokkos::LayoutLeft, ExecSpace> intZ_RBR_Cell(
-      "intZ_RBR_Cell", hermite_data.extent(0), hermite_data.extent(1), 2*m+3, hermite_data.extent(6), hermite_data.extent(7));
-  Kokkos::View<double***, Kokkos::LayoutLeft, ExecSpace> intR_RBZ_Cell(
-      "intR_RBZ_Cell", hermite_data.extent(0), hermite_data.extent(6), hermite_data.extent(7));
+  Kokkos::View<double*****, Kokkos::LayoutLeft, ExecSpace> intZ_RBR_Cell("intZ_RBR_Cell", nR, nZ, order+1, nphi, nt);
+  Kokkos::View<double***, Kokkos::LayoutLeft, ExecSpace> intR_RBZ_Cell("intR_RBZ_Cell", nR, nphi, nt);
 
   {
     using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<5>>;
     Kokkos::parallel_for("IntegrateZ",
-        Policy({0, 0, 0, 0, 0}, {hermite_data.extent(0), hermite_data.extent(1),
-                             2*m+2,
-                             hermite_data.extent(6), hermite_data.extent(7)}),
+        Policy({0, 0, 0, 0, 0}, {nR, nZ, order, nphi, nt}),
         KOKKOS_LAMBDA(int i, int j, int idR, int k, int l) {
           intZ_RBR_Cell(i, j, idR, k, l) = 0.0;
           for (int idZ = 1; idZ < 2*m+3; idZ += 2)
@@ -117,8 +114,7 @@ void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const doub
   {
     using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<3>>;
     Kokkos::parallel_for("IntegrateR",
-        Policy({0, 1, 0, 0}, {hermite_data.extent(0), 2*m+3,
-                             hermite_data.extent(6), hermite_data.extent(7)}),
+        Policy({0, 0, 0}, {nR, nphi, nt}),
         KOKKOS_LAMBDA(int i, int k, int l) {
           intR_RBZ_Cell(i, k, l) = 0.0;
           for (int idR = 1; idR < 2*m+3; idR += 2) {
@@ -136,23 +132,21 @@ void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const doub
   {
     using Policy = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<6>>;
     Kokkos::parallel_for("Compute psi",
-        Policy({0, 0, 0, 0, 0, 0}, {hermite_data.extent(0), hermite_data.extent(1),
-                             2*m+3, 2*m+3,
-                             hermite_data.extent(6), hermite_data.extent(7)}),
+        Policy({0, 0, 0, 0, 0, 0}, {nR, nZ, order+1, order+1, nphi, nt}),
         KOKKOS_LAMBDA(int i, int j, int idR, int idZ, int k, int l) {
-          psi_hermite_data(i,j,idR,idZ,k,l) = - intZ_RBR(i, j, idR, idZ, k, l) + intR_RBZ(i, idR, k, l);
-          if (idR == 0)
-            for (int ii = 0; ii < i; ++i)
-              psi_hermite_data(i, j, 0, idZ, k, l) += intR_RBZ_Cell(ii, k, l);
-          if (idZ == 0)
-            for (int jj = 0; jj < j; ++j)
-              psi_hermite_data(i, j, idR, 0, k, l) += intZ_RBR_Cell(i, jj, idR, k, l);
+          psi_hermite_data(i,j,idR,idZ,k,l) = - intZ_RBR(i, j, idR, idZ, k, l);
+          if (idZ == 0) {
+            psi_hermite_data(i,j,idR,0,k,l) += intR_RBZ(i, idR, k, l);
+            for (int jj = 0; jj < j; ++jj)
+              psi_hermite_data(i, j, idR, 0, k, l) -= intZ_RBR_Cell(i, jj, idR, k, l);
+            if (idR == 0)
+              for (int ii = 0; ii < i; ++ii)
+                psi_hermite_data(i, j, 0, 0, k, l) += intR_RBZ_Cell(ii, k, l);
+          }
         });
   }
 
   Kokkos::fence();
-
-
 }
 
 template<int m, class T>
@@ -246,7 +240,7 @@ void computeDerivativesStencil(ViewDataType view_data, ViewHermiteDataType view_
   }
 }
 
-template<int m, int swidth = 5>
+template<int m, int swidth = 7>
 struct FieldInterpolation {
   const int nR_data, nZ_data;
   const int nfields;
