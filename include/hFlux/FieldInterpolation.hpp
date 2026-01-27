@@ -62,9 +62,6 @@ KOKKOS_INLINE_FUNCTION
 void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const double hR, const double hZ) {
   const int nR_hermite_data = hermite_data.extent(0);
   const int nZ_hermite_data = hermite_data.extent(1);
-  int iR0 = nR_hermite_data / 2;
-  int iZ0 = nZ_hermite_data / 2;
-
   auto RBR = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, 0);
 
   for (int iR = 0; iR < nR_hermite_data; ++iR)
@@ -73,30 +70,19 @@ void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const doub
         // Fill Psi coefficients with local - Int BRdZ
           psi_hermite_data(iR, iZ, idR, 0) = 0.0;
           for (int idZ = 1; idZ < 2*m+3; ++idZ) {
-              psi_hermite_data(iR, iZ, idR, idZ) = - RBR(iR, iZ, idR, idZ - 1) * hZ / static_cast<Real>(idZ);
+            psi_hermite_data(iR, iZ, idR, idZ) = - RBR(iR, iZ, idR, idZ - 1) * hZ / static_cast<Real>(idZ);
+            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ,  idR, idZ) * std::pow(-0.5, idZ);
           }
         }
         // Constant part with area from center to edges in cell iZ0
-        for (int iZ = iZ0+1; iZ < nZ_hermite_data; ++iZ) {
+        for (int iZ = 1; iZ < nZ_hermite_data; ++iZ) {
           Real II = 0.0; // Integral over the entire cell
           for (int idZ = 1; idZ < 2*m+3; ++idZ) {
             II += psi_hermite_data(iR, iZ, idR, idZ) * (std::pow(0.5,idZ) - std::pow(-0.5,idZ));
-            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, iZ0, idR, idZ) * std::pow( 0.5, idZ);
-            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ,  idR, idZ) * std::pow(-0.5, idZ);
+            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, 0, idR, idZ) * std::pow( 0.5, idZ);
           }
           // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
           for (int iiZ = iZ+1; iiZ < nZ_hermite_data; ++iiZ)
-            psi_hermite_data(iR, iiZ, idR, 0) += II;
-        }
-        // Repeat line integration towards bottm
-        for (int iZ = 0; iZ < iZ0; ++iZ) {
-          Real II = 0.0;
-          for (int idZ = 1; idZ < 2*m+3; ++idZ) {
-            II += psi_hermite_data(iR, iZ, idR, idZ) * (std::pow(-0.5,idZ) - std::pow(0.5,idZ));
-            psi_hermite_data(iR, iZ, idR, 0) += psi_hermite_data(iR, iZ0, idR, idZ) * std::pow(-0.5, idZ);
-            psi_hermite_data(iR, iZ, idR, 0) -= psi_hermite_data(iR, iZ , idR, idZ) * std::pow( 0.5, idZ);
-          }
-          for (int iiZ = 0; iiZ < iZ; ++iiZ)
             psi_hermite_data(iR, iiZ, idR, 0) += II;
         }
       }
@@ -107,34 +93,41 @@ void computeFlux(ViewType hermite_data, PsiViewType psi_hermite_data, const doub
       for (int iR = 0; iR < nR_hermite_data; ++iR) {
         // Fill Psi coefficients with local - Int BRdZ
           for (int idR = 1; idR < 2*m+3; ++idR) {
-              psi_hermite_data(iR, iZ, idR, 0) += RBZ(iR, iZ0, idR - 1, 0) * hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, idR, 0) += RBZ(iR, 0, idR - 1, 0) * hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, 0,  idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
           }
         }
 
         // Constant part with area from center to edges in cell iZ0
-        for (int iR = iR0+1; iR < nR_hermite_data; ++iR) {
+        for (int iR = 1; iR < nR_hermite_data; ++iR) {
           Real II = 0.0; // Integral over the entire cell
           for (int idR = 1; idR < 2*m+3; ++idR) {
-            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(0.5,idR) - std::pow(-0.5,idR))* hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, iZ0,  idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
+            II += RBZ(iR, 0, idR-1, 0) * (std::pow(0.5,idR) - std::pow(-0.5,idR))* hR / static_cast<Real>(idR);
+            psi_hermite_data(iR, iZ, 0, 0) += RBZ(0, 0, idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
           }
           // Carry out integral to the end of the domain ammending the constant coefficient in Taylor expantion
           for (int iiR = iR+1; iiR < nR_hermite_data; ++iiR)
             psi_hermite_data(iiR, iZ, 0, 0) += II;
         }
-        // Repeat line integration towards bottm
-        for (int iR = 0; iR < iR0; ++iR) {
-          Real II = 0.0;
-          for (int idR = 1; idR < 2*m+3; ++idR) {
-            II += RBZ(iR, iZ0, idR-1, 0) * (std::pow(-0.5, idR) - std::pow(0.5,idR))* hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) += RBZ(iR0, iZ0, idR-1, 0) * std::pow(-0.5, idR)* hR / static_cast<Real>(idR);
-            psi_hermite_data(iR, iZ, 0, 0) -= RBZ(iR, iZ0 , idR-1, 0) * std::pow( 0.5, idR)* hR / static_cast<Real>(idR);
-          }
-          for (int iiR = 0; iiR < iR; ++iiR)
-            psi_hermite_data(iiR, iZ, 0, 0) += II;
-        }
       }
+//  // Find minimum and subtract so that function is never zero
+//  Real min_psi0 = 0.0;
+//  for (int iR = 0; iR < nR_hermite_data; ++iR) {
+//    for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+//      if ( min_psi0 > psi_hermite_data(iR, iZ, 0, 0) ) {
+//        min_psi0 = psi_hermite_data(iR, iZ, 0, 0);
+//      }
+//    }
+//  }
+//
+//  for (int iR = 0; iR < nR_hermite_data; ++iR) {
+//    for (int iZ = 0; iZ < nZ_hermite_data; ++iZ) {
+//      if ( min_psi0 > psi_hermite_data(iR, iZ, 0, 0) ) {
+//        psi_hermite_data(iR, iZ, 0, 0) -= min_psi0;
+//      }
+//    }
+//  }
+
 }
 
 template<int m, class T>
@@ -228,7 +221,7 @@ void computeDerivativesStencil(ViewDataType view_data, ViewHermiteDataType view_
   }
 }
 
-template<int m, int swidth = 7>
+template<int m, int swidth = 5>
 struct FieldInterpolation {
   const int nR_data, nZ_data;
   const int nfields;

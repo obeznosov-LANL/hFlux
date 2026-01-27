@@ -69,10 +69,10 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   double eps = 1e-8;
   double corners[4];
   hflux_getcorners(fi_data, corners);
-  double R0_mesh = corners[0] + eps;
-  double Z0_mesh = corners[2] + eps;
-  double dR_mesh = (corners[1] - eps - (corners[0] + eps)) / (nR_mesh-1);
-  double dZ_mesh = (corners[3] - eps - (corners[2] + eps)) / (nZ_mesh-1);
+  double R0_mesh = corners[0];
+  double Z0_mesh = corners[2];
+  double dR_mesh = (corners[1] - eps - corners[0]) / (nR_mesh-1);
+  double dZ_mesh = (corners[3] - eps - corners[2]) / (nZ_mesh-1);
 
   for (int i = 0; i < nR_mesh; ++i)
     for (int j = 0; j < nZ_mesh; ++j) {
@@ -89,7 +89,7 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   hflux_field_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value);
   hflux_psi_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value_psi, &center_R, &center_Z);
 
-  double q_0 = 2.1 + 2.0 * (center_R - 3.0) * (center_R - 3.0) + 2.0 * center_Z * center_Z;
+  double q_0 = 2.1 + 2.0 * (corners[0] - 3.0) * (corners[0] - 3.0) + 2.0 * corners[2] * corners[2];
   double Psi0 = log(q_0) / 2.0 * 0.5;
 
   l2err[0] = 0.0;
@@ -107,6 +107,10 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
       jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
       l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
     }
+
+  double q = 2.1 + 2.0 * (R0_mesh - 3.0) * (R0_mesh - 3.0) + 2.0 * Z0_mesh * Z0_mesh;
+  printf("%20.14le\n", mesh_value_psi[0]);
+  printf("%20.14le\n", log(q) / q2 * 0.5 - Psi0);
 
   l2err[0] = sqrt(l2err[0] * dR_mesh * dZ_mesh);
   l2err[1] = sqrt(l2err[1] * dR_mesh * dZ_mesh);
