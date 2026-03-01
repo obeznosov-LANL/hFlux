@@ -48,13 +48,14 @@ double hflux_get_psi_extrema(
     void* fi, double* x, int sign) {
   auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
+  // psi_hermite_data: (idR, idZ, k, ti, iR, iZ)
   Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
-      pFi->hermite_data.extent(0),
-      pFi->hermite_data.extent(1),
-      pFi->hermite_data.extent(2) + 1,
-      pFi->hermite_data.extent(3),
-      pFi->hermite_data.extent(6),
-      pFi->hermite_data.extent(7));
+      pFi->hermite_data.extent(0) + 1,  // idR: 2*m+3
+      pFi->hermite_data.extent(1),       // idZ: 2*m+3
+      pFi->hermite_data.extent(4),       // k: nphi
+      pFi->hermite_data.extent(5),       // ti: nt
+      pFi->hermite_data.extent(6),       // iR: nR
+      pFi->hermite_data.extent(7));      // iZ: nZ
   computeFlux<m>(pFi->hermite_data, psi_hermite_data, (*pFi).hR, (*pFi).hZ);
 
   using HostMemSpace = Kokkos::HostSpace::memory_space;
@@ -197,13 +198,14 @@ void hflux_psi_eval(
   MeshValueView Psi_h(mesh_value, N, pFi->nphi_data, pFi->nt);
   auto Psi = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, Psi_h);
 
+  // psi_hermite_data: (idR, idZ, k, ti, iR, iZ)
   Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
-      pFi->hermite_data.extent(0),
-      pFi->hermite_data.extent(1),
-      pFi->hermite_data.extent(2) + 1,
-      pFi->hermite_data.extent(3),
-      pFi->hermite_data.extent(6),
-      pFi->hermite_data.extent(7));
+      pFi->hermite_data.extent(0) + 1,  // idR: 2*m+3
+      pFi->hermite_data.extent(1),       // idZ: 2*m+3
+      pFi->hermite_data.extent(4),       // k: nphi
+      pFi->hermite_data.extent(5),       // ti: nt
+      pFi->hermite_data.extent(6),       // iR: nR
+      pFi->hermite_data.extent(7));      // iZ: nZ
   computeFlux<m>(pFi->hermite_data, psi_hermite_data, (*pFi).hR, (*pFi).hZ);
 
   Kokkos::fence();
