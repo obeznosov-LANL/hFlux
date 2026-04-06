@@ -18,15 +18,12 @@ void hflux_kokkos_finalize() {
 void hflux_init(
     const int nR_data,
     const int nZ_data,
-    const int nfields,
-    const int nphi_data,
-    const int nt,
     const double R0,
     const double Z0,
     const double dR,
     const double dZ,
     void ** fi) {
-  *fi = (void*) new FieldInterpolation<m>(nR_data, nZ_data, nfields, nphi_data, nt, R0, Z0, dR, dZ);
+  *fi = (void*) new FieldInterpolation<m>(nR_data, nZ_data, R0, Z0, dR, dZ);
 }
 
 void hflux_interpolate(
@@ -34,11 +31,10 @@ void hflux_interpolate(
 
     auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
-    Kokkos::View<double ******, Kokkos::LayoutLeft, Kokkos::HostSpace,
+    Kokkos::View<double ***, Kokkos::LayoutRight, Kokkos::HostSpace,
                  Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-        h_view(raw_field_data, pFi->nR_data, pFi->nZ_data, pFi->nfields,
-               pFi->ndims, pFi->nphi_data, pFi->nt);
-    Kokkos::deep_copy(pFi->getDataRef(), h_view);
+        h_view(raw_field_data, pFi->nR_data, pFi->nZ_data,  pFi->ndims);
+    Kokkos::deep_copy(pFi->data, h_view);
     Kokkos::fence();
 
     pFi->interpolate();
@@ -49,13 +45,11 @@ double hflux_get_psi_extrema(
   auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
   // psi_hermite_data: (idR, idZ, k, ti, iR, iZ)
-  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
-      pFi->hermite_data.extent(0) + 1,  // idR: 2*m+3
+  Kokkos::View<double****, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
+      pFi->hermite_data.extent(0),       // idR: 2*m+3
       pFi->hermite_data.extent(1),       // idZ: 2*m+3
-      pFi->hermite_data.extent(4),       // k: nphi
-      pFi->hermite_data.extent(5),       // ti: nt
-      pFi->hermite_data.extent(6),       // iR: nR
-      pFi->hermite_data.extent(7));      // iZ: nZ
+      pFi->hermite_data.extent(3),       // iR: nR
+      pFi->hermite_data.extent(4));      // iZ: nZ
   computeFlux<m>(pFi->hermite_data, psi_hermite_data, (*pFi).hR, (*pFi).hZ);
 
   using HostMemSpace = Kokkos::HostSpace::memory_space;
@@ -89,8 +83,8 @@ void hflux_compute_poincare(
   struct FieldLine {
     const FieldInterpolation<m> pFi;
     KOKKOS_INLINE_FUNCTION ErrorCode operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
-      Dim3 B_;
-      pFi.evalB(B_, {0.0, 0.0, X[0], phi, X[1]}, pFi.hermite_data);
+      Dim3 B_ = {};
+      pFi.eval_array(B_, {0.0, 0.0, X[0], phi, X[1]}, pFi.hermite_data);
       dXdphi[0] = (B_[0]) / B_[1] * X[0];
       dXdphi[1] = (B_[2]) / B_[1] * X[0];
       return ErrorCode::Success;
@@ -132,35 +126,32 @@ void hflux_field_eval(
     const double* R_mesh,
     const double* phi_mesh,
     const double* Z_mesh,
-    const double* t_mesh,
     double* mesh_value) {
 
   const auto pFi = static_cast<FieldInterpolation<m>*>(fi);
   using MeshView = Kokkos::View<const double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-  using MeshValueView = Kokkos::View<double*****, Kokkos::LayoutLeft, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+  using MeshValueView = Kokkos::View<double**, Kokkos::LayoutLeft, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
   const MeshView R_h(R_mesh, N);
   const MeshView phi_h(phi_mesh, N);
   const MeshView Z_h(Z_mesh, N);
-  const MeshView t_h(t_mesh, N);
 
   using DevMemSpace = Kokkos::DefaultExecutionSpace::memory_space;
   auto R = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, R_h);
   auto phi = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, phi_h);
   auto Z = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, Z_h);
-  auto t = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, t_h);
 
-  MeshValueView B_h(mesh_value, N, pFi->nfields, pFi->ndims, pFi->nphi_data, pFi->nt);
+  MeshValueView B_h(mesh_value, N, pFi->ndims);
   auto B = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, B_h);
 
   Kokkos::fence();
-  Kokkos::parallel_for("eval", N,
+  using ExecSpace = Kokkos::DefaultExecutionSpace;
+  Kokkos::parallel_for("eval",
+  Kokkos::RangePolicy<ExecSpace>(0, N),
   KOKKOS_LAMBDA(int i){
-    auto sbv = Kokkos::subview(B,
-             i, 0, Kokkos::ALL, 0, 0);
-    Kokkos::Array<Real, 3> B_;
-    (*pFi).evalB(B_, {0.0, 0.0, R(i), phi(i), Z(i)}, (*pFi).hermite_data);
-    for (int di = 0; di < 3; ++di) sbv(di) = B_[di];
+    Dim3 B_ = {};
+   // (*pFi).eval_array(B_, {0.0, 0.0, R(i), phi(i), Z(i)}, (*pFi).hermite_data);
+    ////for (int d = 0; d < 3; ++d) B(i, d) = B_[d];
   });
 
   Kokkos::fence();
@@ -174,7 +165,6 @@ void hflux_psi_eval(
     const double* R_mesh,
     const double* phi_mesh,
     const double* Z_mesh,
-    const double* t_mesh,
     double* mesh_value,
     double* center_R, double* center_Z) {
 
@@ -182,36 +172,32 @@ void hflux_psi_eval(
 
   const auto pFi = static_cast<FieldInterpolation<m>*>(fi);
   using MeshView = Kokkos::View<const double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-  using MeshValueView = Kokkos::View<double***, Kokkos::LayoutLeft, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+  using MeshValueView = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
   const MeshView R_h(R_mesh, N);
   const MeshView phi_h(phi_mesh, N);
   const MeshView Z_h(Z_mesh, N);
-  const MeshView t_h(t_mesh, N);
 
   using DevMemSpace = Kokkos::DefaultExecutionSpace::memory_space;
   auto R = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, R_h);
   auto phi = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, phi_h);
   auto Z = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, Z_h);
-  auto t = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, t_h);
 
-  MeshValueView Psi_h(mesh_value, N, pFi->nphi_data, pFi->nt);
+  MeshValueView Psi_h(mesh_value, N);
   auto Psi = Kokkos::create_mirror_view_and_copy(DevMemSpace{}, Psi_h);
 
   // psi_hermite_data: (idR, idZ, k, ti, iR, iZ)
-  Kokkos::View<double******, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
-      pFi->hermite_data.extent(0) + 1,  // idR: 2*m+3
+  Kokkos::View<double****, Kokkos::LayoutLeft, ExecSpace> psi_hermite_data("psi",
+      pFi->hermite_data.extent(0),       // idR: 2*m+3
       pFi->hermite_data.extent(1),       // idZ: 2*m+3
-      pFi->hermite_data.extent(4),       // k: nphi
-      pFi->hermite_data.extent(5),       // ti: nt
-      pFi->hermite_data.extent(6),       // iR: nR
-      pFi->hermite_data.extent(7));      // iZ: nZ
+      pFi->hermite_data.extent(3),       // iR: nR
+      pFi->hermite_data.extent(4));      // iZ: nZ
   computeFlux<m>(pFi->hermite_data, psi_hermite_data, (*pFi).hR, (*pFi).hZ);
 
   Kokkos::fence();
   Kokkos::parallel_for("eval", N,
   KOKKOS_LAMBDA(int i){
-    (*pFi).evalPsi(Psi(i, 0, 0), {0.0, 0.0, R(i), phi(i), Z(i)}, psi_hermite_data);
+ //   (*pFi).evalPsi(Psi(i), {0.0, 0.0, R(i), phi(i), Z(i)}, psi_hermite_data);
   });
 
   *center_R = pFi->hR0 + (pFi->nR_hermite_data/2 + 0.5) * pFi->hR;

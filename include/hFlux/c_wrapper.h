@@ -8,8 +8,7 @@ extern "C" {
   void hflux_kokkos_init();
   void hflux_kokkos_finalize();
 
-  void hflux_init(const int nR_data, const int nZ_data, const int nfields,
-                  const int nphi_data, const int nt, const double R0,
+  void hflux_init(const int nR_data, const int nZ_data, const double R0,
                   const double Z0, const double dR, const double dZ, void **fi);
 
   void hflux_interpolate(void *fi, double *raw_field_data);
@@ -20,12 +19,11 @@ extern "C" {
 
   void hflux_field_eval(void *fi, const int N, const double *R_mesh,
                         const double *phi_mesh, const double *Z_mesh,
-                        const double *t_mesh, double *mesh_value);
+                        double *mesh_value);
 
   void hflux_psi_eval(void *fi, const int N, const double *R_mesh,
                         const double *phi_mesh, const double *Z_mesh,
-                        const double *t_mesh, double *mesh_value,
-                        double* center_R, double* center_Z);
+                        double *mesh_value, double* center_R, double* center_Z);
 
   void hflux_destroy(void* fi);
 

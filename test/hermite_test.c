@@ -10,10 +10,6 @@ typedef double Dim3[3];
 
 void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   void *fi_data;
-
-  int nfields = 2;
-  int nphi_data = 1;
-  int nt = 1;
   int ndim  = 3;
   double R0 = 1.525;
   double Z0 = -2.975;
@@ -31,39 +27,32 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   double R_a = 3.0;
   double E_0 = 70.0;
 
-  hflux_init(nR_data, nZ_data, nfields, nphi_data, nt, R0, Z0, dR, dZ,
-             &fi_data);
+  hflux_init(nR_data, nZ_data, R0, Z0, dR, dZ, &fi_data);
 
-  double * raw_field_data = (double*) malloc(nR_data * nZ_data * nfields * ndim * nphi_data * nt  * sizeof(double));
+  double * raw_field_data = (double*) malloc(nR_data * nZ_data * ndim * sizeof(double));
 
   for (int i = 0; i < nR_data; ++i)
     for (int j = 0; j < nZ_data; ++j) {
       double R = R0 + dR * i, Z = Z0 + dZ * j;
       double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
-      for (int fi = 0; fi < nfields; ++fi)
-        for (int di = 0; di < ndim; ++di)
-          for (int k = 0; k < nphi_data; ++k)
-            for (int ti = 0; ti < nt; ++ti) {
-              int ii = i + nR_data * (j + nZ_data * (fi + nfields * (di + ndim * (k + nphi_data * ti))));
-              if (di == 0) raw_field_data[ii] = -Z / q;
-              else if (di == 1) raw_field_data[ii] = 3.0;
-              else  raw_field_data[ii] = (R - 3.0) / q;
-            }
+      for (int di = 0; di < ndim; ++di) {
+        int ii = i + nR_data * (j + nZ_data * di);
+        if (di == 0) raw_field_data[ii] = -Z / q;
+        else if (di == 1) raw_field_data[ii] = 3.0;
+        else  raw_field_data[ii] = (R - 3.0) / q;
+      }
     }
 
   hflux_interpolate(fi_data, raw_field_data);
 
   int nR_mesh = 400;
   int nZ_mesh = 800;
-  int nphi_mesh = 1;
-  int nt_mesh = 1;
-  int N = nR_mesh * nZ_mesh * nphi_mesh * nt_mesh;
+  int N = nR_mesh * nZ_mesh;
 
   double * R_mesh = (double*) malloc(N * sizeof(double));
   double * Z_mesh = (double*) malloc(N * sizeof(double));
   double * phi_mesh = (double*) malloc(N * sizeof(double));
-  double * t_mesh = (double*) malloc(N * sizeof(double));
-  double * mesh_value = (double*) malloc(N * sizeof(double) * nfields * ndim);
+  double * mesh_value = (double*) malloc(N * sizeof(double) * ndim);
   double * mesh_value_psi = (double*) malloc(N * sizeof(double));
 
   double eps = 1e-8;
@@ -80,14 +69,13 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
       R_mesh[ii] = R0_mesh + dR_mesh * i;
       Z_mesh[ii] = Z0_mesh + dZ_mesh * j;
       phi_mesh[ii] = 0.0;
-      t_mesh[ii] = 0.0;
     }
 
 
   double center_R = 0.0;
   double center_Z = 0.0;
-  hflux_field_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value);
-  hflux_psi_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, t_mesh, mesh_value_psi, &center_R, &center_Z);
+  hflux_field_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, mesh_value);
+  hflux_psi_eval(fi_data, N, R_mesh, phi_mesh, Z_mesh, mesh_value_psi, &center_R, &center_Z);
 
   double q_0 = 2.1 + 2.0 * (corners[0] - 3.0) * (corners[0] - 3.0) + 2.0 * corners[2] * corners[2];
   double Psi0 = log(q_0) / 2.0 * 0.5;
@@ -102,17 +90,17 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
     for (int j = 0; j < nZ_mesh; ++j) {
       int ii = i + j * nR_mesh;
       double R = R_mesh[ii], Z = Z_mesh[ii];
-      int jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (0 + ndim * (0 + nphi_mesh * 0))));
+      int jj = i + nR_mesh * j;
       double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
       l2err[0] += pow(    -Z / q / R - mesh_value[jj], 2);
 
-      jj = i + nR_mesh * (j + nZ_mesh * (0 + nphi_mesh * 0));
+      jj = i + nR_mesh * j;
       l2err[1] += pow(log(q) / q2 * 0.5 - Psi0  - mesh_value_psi[jj], 2);
 
       fprintf(file, "%20.14le %20.14le %20.14le %20.14le\n",
           R, Z, log(q) / q2 * 0.5 - Psi0, mesh_value_psi[jj]);
 
-      jj = i + nR_mesh * (j + nZ_mesh * (0 + nfields * (2 + ndim * (0 + nphi_mesh * 0))));
+      jj = i + nR_mesh * (j + 2*nZ_mesh);
       l2err[2] += pow((R-3.0)/ q / R - mesh_value[jj], 2);
     }
   fclose(file);
@@ -130,7 +118,6 @@ void run(int nR_data, int nZ_data, double* phR, Dim3 l2err) {
   free(R_mesh);
   free(Z_mesh);
   free(phi_mesh);
-  free(t_mesh);
   free(mesh_value);
   free(mesh_value_psi);
   free(raw_field_data);

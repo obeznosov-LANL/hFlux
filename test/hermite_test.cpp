@@ -7,9 +7,6 @@
 
 void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
   static const int m = 2;
-  int nfields = 2;
-  int nphi_data = 1;
-  int nt = 1;
   Real R0 = 1.525;
   Real Z0 = -2.975;
   Real dR = 0.0345;
@@ -27,16 +24,16 @@ void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
   Real E_0 = 70.0;
 
   AnalyticField af(q0, q2, R_a, E_0);
-  FieldInterpolation<m> field_interpolation(nR_data, nZ_data, nfields, nphi_data, nt, R0, Z0, dR, dZ);
-  auto field_data = field_interpolation.getDataRef();
+  FieldInterpolation<m> field_interpolation(nR_data, nZ_data, R0, Z0, dR, dZ);
+  auto field_data = field_interpolation.data;
+  auto hermite_data = field_interpolation.hermite_data;
 
   using policy2D = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<2>>;
   Kokkos::parallel_for("setfields",
   policy2D({0,0}, {nR_data,nZ_data}),
   KOKKOS_LAMBDA(int i, int j){
     // linearize: row-major numbering
-    auto sbv = Kokkos::subview(field_data,
-             i, j, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
+    auto sbv = Kokkos::subview(field_data, i, j, Kokkos::ALL);
 
     Real R = R0 + dR * i, Z = Z0 + dZ * j;
     Dim5 X = {};
@@ -44,15 +41,8 @@ void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
     Dim3 vB = {}, dBdR = {}, dBdZ = {}, curlB = {}, E = {};
     Real t = 0.0;
     af(X, t, vB, curlB, dBdR, dBdZ, E);
-    for (int fi = 0; fi < sbv.extent(0); ++fi) {
-      for (int di = 0; di < sbv.extent(1); ++di) {
-        for (int k = 0; k < sbv.extent(2); ++k) {
-          for (int ti = 0; ti < sbv.extent(3); ++ti) {
-            sbv(fi,di,k,ti) = vB[di] * R;
-          }
-        }
-      }
-    }
+    for (int di = 0; di < sbv.extent(0); ++di)
+      sbv(di) = vB[di] * R;
   });
 
   field_interpolation.interpolate();
@@ -66,15 +56,14 @@ void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
   Real dR_pl = (corners[1] - eps - (corners[0] + eps)) / (nR_pl-1);
   Real dZ_pl = (corners[3] - eps - (corners[2] + eps)) / (nZ_pl-1);
 
-  Kokkos::View<Real******, Kokkos::LayoutLeft, ExecSpace> view_pl("plot", nR_pl, nZ_pl, nfields, 3, nphi_data, nt);
+  Kokkos::View<Real***, Kokkos::LayoutRight, ExecSpace> view_pl("plot", nR_pl, nZ_pl, 3);
 
   l2err = {};
   Kokkos::parallel_reduce("eval",
   policy2D({0,0}, {nR_pl,nZ_pl}),
   KOKKOS_LAMBDA(int i, int j, Real& err0, Real& err1, Real& err2){
     // linearize: row-major numbering
-    auto sbv = Kokkos::subview(view_pl,
-             i, j, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL);
+    auto sbv = Kokkos::subview(view_pl, i, j, Kokkos::ALL);
 
     Real R = R0_pl + dR_pl * i, Z = Z0_pl + dZ_pl * j;
     Dim5 X = {};
@@ -84,9 +73,9 @@ void run(int nR_data, int nZ_data, Real& hR, Dim3& l2err) {
     Real t = 0.0;
     af(X, t, vB, curlB, dBdR, dBdZ, E);
 
-    err0 += pow(vB[0] - sbv(0, 0, 0, 0) / R, 2);
-    err1 += pow(vB[1] - sbv(0, 1, 0, 0) / R, 2);
-    err2 += pow(vB[2] - sbv(0, 2, 0, 0) / R, 2);
+    err0 += pow(vB[0] - sbv(0) / R, 2);
+    err1 += pow(vB[1] - sbv(1) / R, 2);
+    err2 += pow(vB[2] - sbv(2) / R, 2);
   }, l2err[0], l2err[1], l2err[2]);
 
   l2err[0] = sqrt(l2err[0] * dR_pl * dZ_pl);
@@ -109,13 +98,18 @@ int main() {
 
     run(NR, 2*NR, hR_new, l2err_new);
     if (ix > 0) {
-      if (std::abs(pow(l2err[0] / l2err_new[0], 1.0 / (order - 0.0))  - hR / hR_new) > 5.e-3) {
-        std::fprintf(stderr, "B_R interpolation did not converge with order %f\n", order);
+      Real e0 = std::abs(pow(l2err[0] / l2err_new[0], 1.0 / (order)) - hR / hR_new);
+      Real e2 = std::abs(pow(l2err[2] / l2err_new[2], 1.0 / (order-1.0)) - hR / hR_new);
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2]);
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2]);
+
+      if (e0 > 5.e-3) {
+        std::fprintf(stderr, "B_R interpolation did not converge with order %f %le\n", order, e0);
         Kokkos::finalize();
         return 1;
       }
-      if (std::abs(pow(l2err[2] / l2err_new[2], 1.0 / (order - 1.0)) - hR / hR_new) > 4.e-2) {
-        std::fprintf(stderr, "B_Z interpolation did not converge with order %f\n", order - 1.0);
+      if (e2 > 4.e-2) {
+        std::fprintf(stderr, "B_Z interpolation did not converge with order %f %le\n", order, e2);
         Kokkos::finalize();
         return 2;
       }
