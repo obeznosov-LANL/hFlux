@@ -9,7 +9,7 @@ KOKKOS_INLINE_FUNCTION
 static constexpr Kokkos::Array<Kokkos::Array<Real, StencilSize>, 6>  fdw()
 {
     static_assert(StencilSize == 5 || StencilSize == 7 || StencilSize == 9,
-                  "Unsupported stencil size — only 5, 7 or 9 are allowed.");
+                  "Unsupported stencil size - only 5, 7 or 9 are allowed.");
 
     if constexpr (StencilSize == 5) {
         // 5-point stencil, O(h^4)
