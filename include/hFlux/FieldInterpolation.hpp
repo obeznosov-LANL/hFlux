@@ -18,13 +18,6 @@ using ExecSpace = Kokkos::DefaultExecutionSpace;
 //   (idR, idZ, di, iR, iZ)
 
 
-template<int m, class HermiteViewType, class PsiViewType>
-void computeFlux(HermiteViewType hermite_data,
-                 PsiViewType psi_hermite_data,
-                 const double hR,
-                 const double hZ)
-{
-}
 
 template<int m, class T>
 KOKKOS_INLINE_FUNCTION
@@ -158,7 +151,6 @@ void compute_derivatives_grid (DataViewType data, HermiteViewType hermite_data,
         }
       }
     });
-    Kokkos::fence();
 }
 
 
@@ -209,6 +201,70 @@ void eval_nonconst_at_half(const RBZViewType& RBZ,
 
 } // namespace detail
 
+template<int m, class HermiteViewType, class PsiViewType>
+void computeFlux(HermiteViewType hermite_data,
+                 PsiViewType psi_hermite_data,
+                 const double hR,
+                 const double hZ)
+{
+  static_assert(HermiteViewType::rank == 5,
+                "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
+
+  using scalar_t = typename HermiteViewType::non_const_value_type;
+
+  // hermite_data(idR, idZ, di, iR, iZ)
+  // idR - polynomial coefficient index in R
+  // idZ - polynomial coefficient index in Z
+  // di - field component index: 0 - RB_R, 1 - RB_phi, 2 - RB_Z
+  // iR - cell index in R
+  // iZ - cell index in Z
+  // Subviews become rank-4: (idR, idZ, iR, iZ)
+  auto RBR = Kokkos::subview(hermite_data,
+                             Kokkos::ALL(), Kokkos::ALL(), 0,
+                             Kokkos::ALL(), Kokkos::ALL());
+  auto RBZ = Kokkos::subview(hermite_data,
+                             Kokkos::ALL(), Kokkos::ALL(), 2,
+                             Kokkos::ALL(), Kokkos::ALL());
+
+  const int Pr   = RBZ.extent_int(0);  // # idR coefficients
+  const int Pz   = RBZ.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
+  const int nR   = RBZ.extent_int(2);  // # radial cells
+  const int nZ   = RBZ.extent_int(3);  // # axial cells
+
+  const int PrBR = RBR.extent_int(0);
+  const int PzBR = RBR.extent_int(1);
+
+  const int iZ0 = nZ / 2;
+
+#ifndef NDEBUG
+  if (hR == 0.0) {
+    Kokkos::abort("computeFlux: hR must be nonzero.");
+  }
+  if (nR <= 0 || nZ <= 0 || Pr <= 0 || Pz <= 0) {
+    Kokkos::abort("computeFlux: empty extents.");
+  }
+  if (RBR.extent_int(2) != nR || RBR.extent_int(3) != nZ) {
+    Kokkos::abort("computeFlux: RBR/RBZ iR/iZ extents mismatch.");
+  }
+#endif
+
+  using exec_space = typename HermiteViewType::execution_space;
+  using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+  using policy1D_t = Kokkos::RangePolicy<exec_space>;
+
+  // compute Z integral and store it in psi coefficients. Thats is psi := - int_Zc^Z RB_R(R,Z') dZ'
+  Kokkos::parallel_for("computeFlux", policy_t({0, 0}, {nR, Pr}),
+    KOKKOS_LAMBDA(const int iRcell, const int idR)
+    {
+    });
+
+  // compute R integral and add to psi coefficients. That is psi += int_Rc RB_Z (R',Zc) dR'
+  Kokkos::parallel_for("computeFlux", policy1D_t(0, nZ),
+    KOKKOS_LAMBDA(const int iZcell)
+    {
+    });
+}
+
 
 template<int m, class HermiteViewType>
 void cleanDivergence(HermiteViewType hermite_data, const double hR, const double hZ)
@@ -235,7 +291,7 @@ void cleanDivergence(HermiteViewType hermite_data, const double hR, const double
   const int PrBR = RBR.extent_int(0);
   const int PzBR = RBR.extent_int(1);
 
-  const int iZ0 = nZ / 2;             // same choice as your original code
+  const int iZ0 = nZ / 2;
 
 #ifndef NDEBUG
   if (hR == 0.0) {
@@ -324,7 +380,6 @@ void cleanDivergence(HermiteViewType hermite_data, const double hR, const double
       }
     });
 
-   Kokkos::fence();
 }
 
 
