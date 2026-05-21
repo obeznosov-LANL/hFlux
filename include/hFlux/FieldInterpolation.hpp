@@ -199,6 +199,25 @@ void eval_nonconst_at_half(const RBZViewType& RBZ,
   }
 }
 
+template <class ViewType, class Scalar>
+KOKKOS_INLINE_FUNCTION
+Scalar eval_z_at(const ViewType& data,
+                 const int idR,
+                 const int iRcell,
+                 const int iZcell,
+                 const int Pz,
+                 const Scalar zeta)
+{
+  Scalar sum = Scalar(0);
+  Scalar p = Scalar(1);
+  for (int idZ = 0; idZ < Pz; ++idZ) {
+    sum += data(idR, idZ, iRcell, iZcell) * p;
+    p *= zeta;
+  }
+
+  return sum;
+}
+
 } // namespace detail
 
 template<int m, class HermiteViewType, class PsiViewType>
@@ -208,7 +227,9 @@ void computeFlux(HermiteViewType hermite_data,
                  const double hZ)
 {
   static_assert(HermiteViewType::rank == 5,
-                "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
+                "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
+  static_assert(PsiViewType::rank == 4,
+                "computeFlux expects rank-4 psi view: (idR,idZ,iR,iZ)");
 
   using scalar_t = typename HermiteViewType::non_const_value_type;
 
@@ -226,19 +247,26 @@ void computeFlux(HermiteViewType hermite_data,
                              Kokkos::ALL(), Kokkos::ALL(), 2,
                              Kokkos::ALL(), Kokkos::ALL());
 
-  const int Pr   = RBZ.extent_int(0);  // # idR coefficients
-  const int Pz   = RBZ.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
+  const int Pr   = RBZ.extent_int(0);  // # idR coefficients in RB_Z
+  const int Pz   = RBZ.extent_int(1);  // # idZ coefficients in RB_Z
   const int nR   = RBZ.extent_int(2);  // # radial cells
   const int nZ   = RBZ.extent_int(3);  // # axial cells
 
   const int PrBR = RBR.extent_int(0);
   const int PzBR = RBR.extent_int(1);
 
+  const int PpsiR = psi_hermite_data.extent_int(0);
+  const int PpsiZ = psi_hermite_data.extent_int(1);
+
+  const int iR0 = nR / 2;
   const int iZ0 = nZ / 2;
 
 #ifndef NDEBUG
   if (hR == 0.0) {
     Kokkos::abort("computeFlux: hR must be nonzero.");
+  }
+  if (hZ == 0.0) {
+    Kokkos::abort("computeFlux: hZ must be nonzero.");
   }
   if (nR <= 0 || nZ <= 0 || Pr <= 0 || Pz <= 0) {
     Kokkos::abort("computeFlux: empty extents.");
@@ -246,22 +274,178 @@ void computeFlux(HermiteViewType hermite_data,
   if (RBR.extent_int(2) != nR || RBR.extent_int(3) != nZ) {
     Kokkos::abort("computeFlux: RBR/RBZ iR/iZ extents mismatch.");
   }
+  if (psi_hermite_data.extent_int(2) != nR || psi_hermite_data.extent_int(3) != nZ) {
+    Kokkos::abort("computeFlux: psi/RBZ iR/iZ extents mismatch.");
+  }
 #endif
+
+  const scalar_t hR_s = static_cast<scalar_t>(hR);
+  const scalar_t hZ_s = static_cast<scalar_t>(hZ);
+  const scalar_t half = scalar_t(0.5);
+  const scalar_t minus_half = scalar_t(-0.5);
 
   using exec_space = typename HermiteViewType::execution_space;
   using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
   using policy1D_t = Kokkos::RangePolicy<exec_space>;
 
   // compute Z integral and store it in psi coefficients. Thats is psi := - int_Zc^Z RB_R(R,Z') dZ'
-  Kokkos::parallel_for("computeFlux", policy_t({0, 0}, {nR, Pr}),
+  Kokkos::parallel_for("computeFlux_Z", policy_t({0, 0}, {nR, PpsiR}),
     KOKKOS_LAMBDA(const int iRcell, const int idR)
     {
+      for (int iZcell = 0; iZcell < nZ; ++iZcell) {
+        for (int idZ = 0; idZ < PpsiZ; ++idZ) {
+          psi_hermite_data(idR, idZ, iRcell, iZcell) = scalar_t(0);
+        }
+
+        for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+          scalar_t val = scalar_t(0);
+          if (idR < PrBR && (idZ - 1) < PzBR) {
+            val = -hZ_s * RBR(idR, idZ - 1, iRcell, iZcell) /
+                  static_cast<scalar_t>(idZ);
+          }
+
+          psi_hermite_data(idR, idZ, iRcell, iZcell) = val;
+        }
+      }
+
+      // Anchor Zc is the lower edge of the central Z cell.
+      scalar_t sum_plus = scalar_t(0);
+      scalar_t sum_minus = scalar_t(0);
+      scalar_t p_plus = half;
+      scalar_t p_minus = minus_half;
+      for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+        const scalar_t ak = psi_hermite_data(idR, idZ, iRcell, iZ0);
+        sum_plus += ak * p_plus;
+        sum_minus += ak * p_minus;
+        p_plus *= half;
+        p_minus *= minus_half;
+      }
+
+      scalar_t a0 = -sum_minus;
+      psi_hermite_data(idR, 0, iRcell, iZ0) = a0;
+      scalar_t boundary = a0 + sum_plus;
+
+      for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
+        sum_plus = scalar_t(0);
+        sum_minus = scalar_t(0);
+        p_plus = half;
+        p_minus = minus_half;
+        for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+          const scalar_t ak = psi_hermite_data(idR, idZ, iRcell, iZcell);
+          sum_plus += ak * p_plus;
+          sum_minus += ak * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        a0 = boundary - sum_minus;
+        psi_hermite_data(idR, 0, iRcell, iZcell) = a0;
+        boundary = a0 + sum_plus;
+      }
+
+      boundary = scalar_t(0);
+      for (int iZcell = iZ0; iZcell-- > 0; ) {
+        sum_plus = scalar_t(0);
+        sum_minus = scalar_t(0);
+        p_plus = half;
+        p_minus = minus_half;
+        for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+          const scalar_t ak = psi_hermite_data(idR, idZ, iRcell, iZcell);
+          sum_plus += ak * p_plus;
+          sum_minus += ak * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        a0 = boundary - sum_plus;
+        psi_hermite_data(idR, 0, iRcell, iZcell) = a0;
+        boundary = a0 + sum_minus;
+      }
     });
 
+  Kokkos::fence();
+
   // compute R integral and add to psi coefficients. That is psi += int_Rc RB_Z (R',Zc) dR'
-  Kokkos::parallel_for("computeFlux", policy1D_t(0, nZ),
+  Kokkos::parallel_for("computeFlux_R", policy1D_t(0, nZ),
     KOKKOS_LAMBDA(const int iZcell)
     {
+      for (int iRcell = 0; iRcell < nR; ++iRcell) {
+        for (int idR = 1; idR < PpsiR; ++idR) {
+          scalar_t z_anchor_coeff = scalar_t(0);
+          if ((idR - 1) < Pr) {
+            z_anchor_coeff = detail::eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half);
+          }
+
+          psi_hermite_data(idR, 0, iRcell, iZcell) +=
+              hR_s * z_anchor_coeff / static_cast<scalar_t>(idR);
+        }
+      }
+
+      // Anchor Rc is the lower edge of the central R cell.
+      scalar_t sum_plus = scalar_t(0);
+      scalar_t sum_minus = scalar_t(0);
+      scalar_t p_plus = half;
+      scalar_t p_minus = minus_half;
+      for (int idR = 1; idR < PpsiR; ++idR) {
+        scalar_t coeff = scalar_t(0);
+        if ((idR - 1) < Pr) {
+          coeff = hR_s * detail::eval_z_at(RBZ, idR - 1, iR0, iZ0, Pz, minus_half) /
+                  static_cast<scalar_t>(idR);
+        }
+        sum_plus += coeff * p_plus;
+        sum_minus += coeff * p_minus;
+        p_plus *= half;
+        p_minus *= minus_half;
+      }
+
+      scalar_t a0 = -sum_minus;
+      psi_hermite_data(0, 0, iR0, iZcell) += a0;
+      scalar_t boundary = a0 + sum_plus;
+
+      for (int iRcell = iR0 + 1; iRcell < nR; ++iRcell) {
+        sum_plus = scalar_t(0);
+        sum_minus = scalar_t(0);
+        p_plus = half;
+        p_minus = minus_half;
+        for (int idR = 1; idR < PpsiR; ++idR) {
+          scalar_t coeff = scalar_t(0);
+          if ((idR - 1) < Pr) {
+            coeff = hR_s * detail::eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+                    static_cast<scalar_t>(idR);
+          }
+          sum_plus += coeff * p_plus;
+          sum_minus += coeff * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        a0 = boundary - sum_minus;
+        psi_hermite_data(0, 0, iRcell, iZcell) += a0;
+        boundary = a0 + sum_plus;
+      }
+
+      boundary = scalar_t(0);
+      for (int iRcell = iR0; iRcell-- > 0; ) {
+        sum_plus = scalar_t(0);
+        sum_minus = scalar_t(0);
+        p_plus = half;
+        p_minus = minus_half;
+        for (int idR = 1; idR < PpsiR; ++idR) {
+          scalar_t coeff = scalar_t(0);
+          if ((idR - 1) < Pr) {
+            coeff = hR_s * detail::eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+                    static_cast<scalar_t>(idR);
+          }
+          sum_plus += coeff * p_plus;
+          sum_minus += coeff * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        a0 = boundary - sum_plus;
+        psi_hermite_data(0, 0, iRcell, iZcell) += a0;
+        boundary = a0 + sum_minus;
+      }
     });
 }
 

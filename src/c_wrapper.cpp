@@ -197,7 +197,7 @@ void hflux_psi_eval(
   Kokkos::fence();
   Kokkos::parallel_for("eval", N,
   KOKKOS_LAMBDA(int i){
- //   (*pFi).evalPsi(Psi(i), {0.0, 0.0, R(i), phi(i), Z(i)}, psi_hermite_data);
+    evalPsi(Psi(i), {0.0, 0.0, R(i), phi(i), Z(i)}, psi_hermite_data);
   });
 
   *center_R = pFi->hR0 + (pFi->nR_hermite_data/2 + 0.5) * pFi->hR;
