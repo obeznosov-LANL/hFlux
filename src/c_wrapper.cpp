@@ -35,8 +35,6 @@ void hflux_interpolate(
                  Kokkos::MemoryTraits<Kokkos::Unmanaged>>
         h_view(raw_field_data, pFi->nR_data, pFi->nZ_data,  pFi->ndims);
     Kokkos::deep_copy(pFi->data, h_view);
-    Kokkos::fence();
-
     pFi->interpolate();
 }
 
@@ -79,12 +77,11 @@ void hflux_compute_poincare(
   const auto pFi = static_cast<FieldInterpolation<m>*>(fi);
 
 
-
   struct FieldLine {
     const FieldInterpolation<m> pFi;
     KOKKOS_INLINE_FUNCTION ErrorCode operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
       Dim3 B_ = {};
-      pFi.eval_array(B_, {0.0, 0.0, X[0], phi, X[1]}, pFi.hermite_data);
+      pFi(B_, {0.0, 0.0, X[0], phi, X[1]});
       dXdphi[0] = (B_[0]) / B_[1] * X[0];
       dXdphi[1] = (B_[2]) / B_[1] * X[0];
       return ErrorCode::Success;
@@ -98,8 +95,6 @@ void hflux_compute_poincare(
     X_trace_h(poincare_data, n_traces, 2,  n_turn+1);
 
   auto X_trace = create_mirror_view_and_copy(DevMemSpace{}, X_trace_h);
-  Kokkos::fence();
-
   Kokkos::parallel_for("poincare", n_traces,
   KOKKOS_LAMBDA(int i){
     Kokkos::Array<Dim2, 10> work;
@@ -150,8 +145,8 @@ void hflux_field_eval(
   Kokkos::RangePolicy<ExecSpace>(0, N),
   KOKKOS_LAMBDA(int i){
     Dim3 B_ = {};
-   // (*pFi).eval_array(B_, {0.0, 0.0, R(i), phi(i), Z(i)}, (*pFi).hermite_data);
-    ////for (int d = 0; d < 3; ++d) B(i, d) = B_[d];
+    (*pFi)(B_, {0.0, 0.0, R(i), phi(i), Z(i)});
+    for (int d = 0; d < 3; ++d) B(i, d) = B_[d];
   });
 
   Kokkos::fence();

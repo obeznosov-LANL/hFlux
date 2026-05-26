@@ -30,27 +30,25 @@ void run(int nR_data, int nZ_data, double* l2err) {
   double R_a = 3.0;
   double E_0 = 70.0;
 
-  hflux_init(nR_data, nZ_data, nfields, nphi_data, nt, R0, Z0, dR, dZ,
+  hflux_init(nR_data, nZ_data, R0, Z0, dR, dZ,
              &fi_data);
-
-  double * raw_field_data = (double*) malloc(nR_data * nZ_data * nfields * ndim * nphi_data * nt  * sizeof(double));
+  double * raw_field_data = (double*) malloc(nR_data * nZ_data * ndim * sizeof(double));
 
   for (int i = 0; i < nR_data; ++i)
     for (int j = 0; j < nZ_data; ++j) {
       double R = R0 + dR * i, Z = Z0 + dZ * j;
       double q = 2.1 + 2.0 * (R - 3.0) * (R - 3.0) + 2.0 * Z * Z;
-      for (int fi = 0; fi < nfields; ++fi)
-        for (int di = 0; di < ndim; ++di)
-          for (int k = 0; k < nphi_data; ++k)
-            for (int ti = 0; ti < nt; ++ti) {
-              int ii = i + nR_data * (j + nZ_data * (fi + nfields * (di + ndim * (k + nphi_data * ti))));
-              if (di == 0) raw_field_data[ii] = -Z / q;
-              else if (di == 1) raw_field_data[ii] = 3.0;
-              else  raw_field_data[ii] = (R - 3.0) / q;
-            }
+      for (int di = 0; di < ndim; ++di) {
+        int ii = i + nR_data * (j + nZ_data * di);
+        if (di == 0) raw_field_data[ii] = -Z / q;
+        else if (di == 1) raw_field_data[ii] = 3.0;
+        else  raw_field_data[ii] = (R - 3.0) / q;
+      }
     }
 
   hflux_interpolate(fi_data, raw_field_data);
+
+
 
   int n_r = 100;
   int n_theta = 5;
@@ -68,6 +66,8 @@ void run(int nR_data, int nZ_data, double* l2err) {
     }
 
   hflux_compute_poincare(fi_data, n_r * n_theta, n_turn, poincare_data);
+}
+/*
 
   double * R_poincare = (double*) malloc(sizeof(double) * N);
   double * Z_poincare = (double*) malloc(sizeof(double) * N);
@@ -83,8 +83,7 @@ void run(int nR_data, int nZ_data, double* l2err) {
   }
 
   double center_R, center_Z;
-
-  hflux_psi_eval(fi_data, N, R_poincare, phi_mesh, Z_poincare, t_mesh, Psi_poincare, &center_R, &center_Z);
+  hflux_psi_eval(fi_data, N, R_poincare, phi_mesh, Z_poincare, Psi_poincare, &center_R, &center_Z);
 
   (*l2err) = 0.0;
   for (int j = 0; j < n_r * n_theta; ++j) {//; j < n_r * n_theta; ++j) {
@@ -103,6 +102,7 @@ void run(int nR_data, int nZ_data, double* l2err) {
   free(raw_field_data);
   hflux_destroy(fi_data);
 }
+*/
 
 int main(int argc, char **argv) {
   int NR = 100;

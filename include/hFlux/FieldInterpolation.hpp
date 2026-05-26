@@ -17,13 +17,10 @@ using ExecSpace = Kokkos::DefaultExecutionSpace;
 // psi_hermite_data index convention (5D, LayoutRight):
 //   (idR, idZ, di, iR, iZ)
 
-
-
 template<int m, class T>
 KOKKOS_INLINE_FUNCTION
 void interpolateInPlace1D(T& data) {
-  assert(data.rank == 1);
-
+  KOKKOS_ASSERT(data.rank == 1);
   static const int sz = m+1;
   Kokkos::Array<Kokkos::Array<Real, 2*sz>, 2*sz> NT;
 
@@ -60,9 +57,9 @@ void interpolateInPlace1D(T& data) {
 template<int m, class ViewHermiteDataType>
 KOKKOS_INLINE_FUNCTION
 void interpolate2D(ViewHermiteDataType view_hermite_data) {
-  assert(view_hermite_data.rank == 2);
-  assert(view_hermite_data.extent(0) == 2*m+3);
-  assert(view_hermite_data.extent(1) == 2*m+3);
+  KOKKOS_ASSERT(view_hermite_data.rank == 2);
+  KOKKOS_ASSERT(view_hermite_data.extent(0) == 2*m+3);
+  KOKKOS_ASSERT(view_hermite_data.extent(1) == 2*m+3);
 
   for (int i = 0; i < 2*m+2; ++i) {
     auto dd1 = Kokkos::subview(view_hermite_data, Kokkos::ALL, i);
@@ -80,13 +77,13 @@ void interpolate2D(ViewHermiteDataType view_hermite_data) {
 template<int m, int swidth, class ViewDataType, class ViewHermiteDataType>
 KOKKOS_INLINE_FUNCTION
 void computeDerivativesStencil(ViewDataType view_data, ViewHermiteDataType view_hermite_data, const Real ratioR, const Real ratioZ) {
-  assert(view_data.rank == 2);
-  assert(view_data.extent(0) == swidth);
-  assert(view_data.extent(1) == swidth);
+  KOKKOS_ASSERT(view_data.rank == 2);
+  KOKKOS_ASSERT(view_data.extent(0) == swidth);
+  KOKKOS_ASSERT(view_data.extent(1) == swidth);
 
-  assert(view_hermite_data.rank == 2);
-  assert(view_hermite_data.extent(0) == m+1);
-  assert(view_hermite_data.extent(1) == m+1);
+  KOKKOS_ASSERT(view_hermite_data.rank == 2);
+  KOKKOS_ASSERT(view_hermite_data.extent(0) == m+1);
+  KOKKOS_ASSERT(view_hermite_data.extent(1) == m+1);
 
   constexpr auto D = fdw<swidth>();
 
@@ -113,8 +110,6 @@ void computeDerivativesStencil(ViewDataType view_data, ViewHermiteDataType view_
 // Computes the finite difference derivates on point data collocated on some grid
 // Stores the scaled derivatives (scaled) in hermite data, ready to be interpolated
 
-
-
 template<int m = 2, int swidth = 7, class DataViewType, class HermiteViewType>
 void compute_derivatives_grid (DataViewType data, HermiteViewType hermite_data,
                          const Real ratioR, const Real ratioZ) {
@@ -122,8 +117,8 @@ void compute_derivatives_grid (DataViewType data, HermiteViewType hermite_data,
     static_assert(DataViewType::rank == 2);
     static_assert(HermiteViewType::rank == 4);
 
-    assert(ratioR > 1.0);
-    assert(ratioZ > 1.0);
+    KOKKOS_ASSERT(ratioR > 1.0);
+    KOKKOS_ASSERT(ratioZ > 1.0);
 
     using exec_space = typename HermiteViewType::execution_space;
 
@@ -152,7 +147,6 @@ void compute_derivatives_grid (DataViewType data, HermiteViewType hermite_data,
       }
     });
 }
-
 
 template<int m = 2, class HermiteViewType>
 void interpolate_grid (HermiteViewType hermite_data) {
