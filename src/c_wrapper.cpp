@@ -81,7 +81,7 @@ void hflux_compute_poincare(
     const FieldInterpolation<m> pFi;
     KOKKOS_INLINE_FUNCTION ErrorCode operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
       Dim3 B_ = {};
-      pFi(B_, {0.0, 0.0, X[0], phi, X[1]});
+      // pFi(B_, {0.0, 0.0, X[0], phi, X[1]});
       dXdphi[0] = (B_[0]) / B_[1] * X[0];
       dXdphi[1] = (B_[2]) / B_[1] * X[0];
       return ErrorCode::Success;
@@ -145,7 +145,7 @@ void hflux_field_eval(
   Kokkos::RangePolicy<ExecSpace>(0, N),
   KOKKOS_LAMBDA(int i){
     Dim3 B_ = {};
-    (*pFi)(B_, {0.0, 0.0, R(i), phi(i), Z(i)});
+    // (*pFi)(B_, {0.0, 0.0, R(i), phi(i), Z(i)});
     for (int d = 0; d < 3; ++d) B(i, d) = B_[d];
   });
 
