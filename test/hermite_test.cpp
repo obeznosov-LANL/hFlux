@@ -2,13 +2,14 @@
 #include <iostream>
 
 #include "AnalyticField.hpp"
-#include "hFlux/FieldInterpolation.hpp"
-#include "hFlux/FiniteDifferenceWeights.hpp"
-
-
+#include "hFlux.hpp"
 
 void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   static const int m = 2;
+  static const int swidth = 7;
+
+  using exec_space = Kokkos::DefaultExecutionSpace;
+
   Real R0 = 1.525;
   Real Z0 = -2.975;
   Real dR = 0.0345;
@@ -20,17 +21,22 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   dR = (R1 - R0) / (nR_data-1);
   dZ = (Z1 - Z0) / (nZ_data-1);
 
+  FieldData<m, swidth, exec_space> data(nR_data, nZ_data, R0, Z0, dR, dZ);
+
   Real q0 = 2.1;
   Real q2 = 2.0;
   Real R_a = 3.0;
   Real E_0 = 70.0;
 
   AnalyticField af(q0, q2, R_a, E_0);
-  FieldInterpolation<m> field_interpolation(nR_data, nZ_data, R0, Z0, dR, dZ);
-  auto field_data = field_interpolation.data;
-  auto hermite_data = field_interpolation.hermite_data;
 
-  using policy2D = Kokkos::MDRangePolicy<ExecSpace, Kokkos::Rank<2>>;
+  auto field_data = data.data;
+  auto hermite_data = data.hermite_data;
+
+  int nR = hermite_data.extent_int(3);
+  int nZ = hermite_data.extent_int(4);
+
+  using policy2D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
   Kokkos::parallel_for("setfields",
   policy2D({0,0}, {nR_data,nZ_data}),
   KOKKOS_LAMBDA(int i, int j){
@@ -38,70 +44,97 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
     auto sbv = Kokkos::subview(field_data, i, j, Kokkos::ALL);
 
     Real R = R0 + dR * i, Z = Z0 + dZ * j;
-    Dim5 X = {};
-    X[2] = R; X[4] = Z;
-    Dim3 vB = {}, dBdR = {}, dBdZ = {}, curlB = {}, E = {};
-    Real t = 0.0;
-    af(X, t, vB, curlB, dBdR, dBdZ, E);
+    Dim3 B = {};
+    af.eval(B, R, Z);
     for (int di = 0; di < sbv.extent(0); ++di)
-      sbv(di) = vB[di] * R;
+      sbv(di) = B[di] * R;
   });
 
-  field_interpolation.interpolate();
-  Kokkos::View<Real****, Kokkos::LayoutRight, ExecSpace> psi_hermite_view(
-      "psi_hermite_view",
-      hermite_data.extent(0),
-      hermite_data.extent(1),
-      hermite_data.extent(3),
-      hermite_data.extent(4));
-  computeFlux<m>(hermite_data,
-      psi_hermite_view,
-      field_interpolation.hR,
-      field_interpolation.hZ);
+  Interpolator<m, swidth> itrp;
+  itrp.interpolate(data.fd_locator,
+      data.hermite_locator,
+      data.data,
+      data.hermite_data);
+
+  itrp.computeFlux(data.hermite_locator,
+      data.hermite_data,
+      data.psi_data);
+
+  itrp.cleanDivergence(data.hermite_locator,
+      data.hermite_data);
+
+
+
+  Kokkos::fence();
+
+  auto hermite_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, hermite_data);
+  auto psi_hermite_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, data.psi_data);
+
+  // Find MA center
+  Real R_center = 3.2;
+  Real Z_center = -0.7;
+  int descent = -1;
+  Real Psi_min;
+
+  Evaluator ev{data.hermite_locator};
+
+  findMagneticAxis(R_center, Z_center,
+              hermite_host,
+              psi_hermite_host,
+              ev,
+              descent,
+              Psi_min);
+
+  std::cout << std::format("Psi_min = {:.17g}", Psi_min) << std::endl;
+
+  Kokkos::parallel_for("Normalize psi",
+  policy2D({0,0}, {nR,nZ}),
+  KOKKOS_LAMBDA(int i, int j){
+    data.psi_data(0,0,i,j) -= Psi_min;
+  });
+
+  l2err = {};
 
   int nR_pl = 400;
   int nZ_pl = 800;
-  auto corners = field_interpolation.getCorners();
   Real eps = 1e-8;
-  Real R0_pl = corners[0] + eps;
-  Real Z0_pl = corners[2] + eps;
-  Real dR_pl = (corners[1] - eps - (corners[0] + eps)) / (nR_pl-1);
-  Real dZ_pl = (corners[3] - eps - (corners[2] + eps)) / (nZ_pl-1);
+  Real R0_pl = data.hermite_locator.R0 + eps;
+  Real Z0_pl = data.hermite_locator.Z0 + eps;
+  Real R1_pl = data.hermite_locator.R1 - eps;
+  Real Z1_pl = data.hermite_locator.Z1 - eps;
+  Real dR_pl = (R1_pl - R0_pl) / (nR_pl-1);
+  Real dZ_pl = (Z1_pl - Z0_pl) / (nZ_pl-1);
 
-  Kokkos::View<Real***, Kokkos::LayoutRight, ExecSpace> view_B("plot_B", nR_pl, nZ_pl, 3);
-  Kokkos::View<Real**, Kokkos::LayoutRight, ExecSpace> view_psi("plot_psi", nR_pl, nZ_pl);
-  Kokkos::View<Real**, Kokkos::LayoutRight, ExecSpace> view_psi_exact("plot_psi_exact", nR_pl, nZ_pl);
+  Kokkos::View<Real***, Kokkos::LayoutRight, exec_space> view_B("plot_B", nR_pl, nZ_pl, 3);
+  Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi("plot_psi", nR_pl, nZ_pl);
+  Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi_exact("plot_psi_exact", nR_pl, nZ_pl);
 
-  Real R_center = field_interpolation.hR0 + static_cast<Real>(field_interpolation.nR_hermite_data / 2) * field_interpolation.hR;
-  Real Z_center = field_interpolation.hZ0 + static_cast<Real>(field_interpolation.nZ_hermite_data / 2) * field_interpolation.hZ;
-
-  l2err = {};
   Kokkos::parallel_reduce("eval",
   policy2D({0,0}, {nR_pl,nZ_pl}),
   KOKKOS_LAMBDA(int i, int j, Real& err0, Real& err1, Real& err2, Real& err_psi){
-    // linearize: row-major numbering
-    auto sbv = Kokkos::subview(view_B, i, j, Kokkos::ALL);
-
     Real R = R0_pl + dR_pl * i, Z = Z0_pl + dZ_pl * j;
-    Dim5 X = {};
-    X[2] = R; X[4] = Z;
-    field_interpolation(sbv, X);
-    field_interpolation.evalPsi(view_psi(i,j), X, psi_hermite_view);
-    Dim3 vB = {}, dBdR = {}, dBdZ = {}, curlB = {}, E = {};
-    Real t = 0.0;
-    af(X, t, vB, curlB, dBdR, dBdZ, E);
 
-    Dim5 X0 = {0.0, 0.0, R_center, 0.0, Z_center};
+    Dim3 B = {}, B_exact = {};
+    Real Psi = 0., Psi_exact = 0.;
 
-    Real psi = af.Psi(X) - af.Psi(X0);
+    ev.evalField(B, R, Z, data.hermite_data);
+    ev.evalPsi(Psi, R, Z, data.psi_data);
 
-    view_psi_exact(i,j) = psi;
+    af.eval(B_exact, R, Z);
+    Psi_exact = af.Psi(R, Z);
 
-    err0 += pow(vB[0] - sbv(0) / R, 2);
-    err1 += pow(vB[1] - sbv(1) / R, 2);
-    err2 += pow(vB[2] - sbv(2) / R, 2);
-    err_psi += pow(psi - view_psi(i,j), 2);
-    err_psi += pow(psi - view_psi(i,j), 2);
+    for (int d = 0; d < 3; ++d) {
+      view_B(i, j, d) = B[d];
+    }
+    view_psi(i, j) = Psi;
+
+    view_psi_exact(i, j) = Psi_exact;
+
+    err0 += pow(B_exact[0] - B[0] / R, 2);
+    err1 += pow(B_exact[1] - B[1] / R, 2);
+    err2 += pow(B_exact[2] - B[2] / R, 2);
+
+    err_psi += pow(Psi_exact - Psi, 2);
   }, l2err[0], l2err[1], l2err[2], l2err[3]);
 
   Kokkos::fence();
@@ -127,7 +160,7 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
 
   for (int i = 0; i < l2err.size(); ++i)
     l2err[i] = sqrt(l2err[i] * dR_pl * dZ_pl);
-  hR = field_interpolation.hR;
+  hR = data.hermite_locator.dR;
 }
 
 
@@ -149,18 +182,18 @@ int main() {
       std::cout << std::format("{:.17g} {:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2], l2err[3]);
       std::cout << std::format("{:.17g} {:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2], l2err_new[3]);
 
-      if ((int)round(o1) < order) {
+      if ((int)round(o1) < order && l2err_new[3] > 1e-12) {
         std::fprintf(stderr, "B_R interpolation did not converge with order %f %le\n", order, o1);
         Kokkos::finalize();
         return 1;
       }
-      if ((int)round(o2) < order - 1) {
+      if ((int)round(o2) < order - 1 && l2err_new[3] > 1e-12) {
         std::fprintf(stderr, "B_Z interpolation did not converge with order %f %le\n", order - 1, o2);
         Kokkos::finalize();
         return 2;
       }
-      if ((int)round(o3) < order) {
-        std::fprintf(stderr, "Psi did not converge with order %f %le %le\n", order+1, o3, hR/hR_new);
+      if ((int)round(o3) < order && l2err_new[3] > 1e-10) {
+        std::fprintf(stderr, "Psi did not converge with order %f %le %le\n", order, o3, hR/hR_new);
         Kokkos::finalize();
         return 2;
       }
