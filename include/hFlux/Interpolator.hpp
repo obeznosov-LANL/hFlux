@@ -197,38 +197,69 @@ void interpolate_grid (HermiteView hermite_data) {
 template<int m, int swidth = 7>
 struct Interpolator {
   template<class DataView, class HermiteView>
+  void interpolateComponent(const StructuredLocator& fd_locator,
+                   const StructuredLocator& hermite_locator,
+                   DataView data,
+                   HermiteView hermite_data,
+                   int component) const {
+
+		auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, component);
+		auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, component, Kokkos::ALL, Kokkos::ALL);
+
+    const Real scaleR = hermite_locator.dR / fd_locator.dR;
+    const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
+
+    compute_derivatives_grid<m, swidth>(dd, hh, scaleR, scaleZ);
+    interpolate_grid<m>(hh);
+  }
+
+  template<int ncomp, class DataView, class HermiteView>
+  void interpolateRange(const StructuredLocator& fd_locator,
+                   const StructuredLocator& hermite_locator,
+                   DataView data,
+                   HermiteView hermite_data, int component0 = 0) const {
+
+     KOKKOS_ASSERT(component0 >= 0);
+     KOKKOS_ASSERT(component0 + ncomp <= data.extent_int(2));
+     KOKKOS_ASSERT(component0 + ncomp <= hermite_data.extent_int(2));
+
+		 for (int i = 0; i < ncomp; ++i) {
+       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, component0 + i);
+     }
+  }
+
+  template<class DataView, class HermiteView>
   void interpolate(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
                    HermiteView hermite_data) const {
-     const int ndims = 3;
-		 for (int i = 0; i < ndims; ++i) {
-		   auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, i);
-		   auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, i, Kokkos::ALL, Kokkos::ALL);
 
-       const Real scaleR = hermite_locator.dR / fd_locator.dR;
-       const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
-
-       compute_derivatives_grid<m, swidth>(dd, hh, scaleR, scaleZ);
-       interpolate_grid<m>(hh);
-     }
+    const int ncomp = data.extent_int(2);
+		for (int i = 0; i < ncomp; ++i) {
+       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, i);
+    }
   }
 
+
+
+
   template<class HermiteView>
-  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data)
+  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0)
   {
     static_assert(HermiteView::rank == 5,
                   "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
+    KOKKOS_ASSERT(component0 >= 0);
+    KOKKOS_ASSERT(component0 + 2 < hermite_data.extent_int(2));
 
     using scalar_t = typename HermiteView::non_const_value_type;
 
     // hermite_data(idR, idZ, di, iR, iZ)
     // Subviews become rank-4: (idR, idZ, iR, iZ)
     auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), 0,
+                               Kokkos::ALL(), Kokkos::ALL(), component0,
                                Kokkos::ALL(), Kokkos::ALL());
     auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), 2,
+                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
                                Kokkos::ALL(), Kokkos::ALL());
 
     const int Pr   = RBZ.extent_int(0);  // # idR coefficients
@@ -320,12 +351,15 @@ struct Interpolator {
   template<class HermiteView, class PsiView>
   void computeFlux(const StructuredLocator& hermite_locator,
                    HermiteView hermite_data,
-                   PsiView psi_hermite_data)
+                   PsiView psi_hermite_data, int component0 = 0)
   {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
     static_assert(PsiView::rank == 4,
                   "computeFlux expects rank-4 psi view: (idR,idZ,iR,iZ)");
+
+    KOKKOS_ASSERT(component0 >= 0);
+    KOKKOS_ASSERT(component0 + 2 < hermite_data.extent_int(2));
 
     using scalar_t = typename HermiteView::non_const_value_type;
 
@@ -337,10 +371,10 @@ struct Interpolator {
     // iZ - cell index in Z
     // Subviews become rank-4: (idR, idZ, iR, iZ)
     auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), 0,
+                               Kokkos::ALL(), Kokkos::ALL(), component0,
                                Kokkos::ALL(), Kokkos::ALL());
     auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), 2,
+                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
                                Kokkos::ALL(), Kokkos::ALL());
 
     const int Pr   = RBZ.extent_int(0);  // # idR coefficients in RB_Z
@@ -525,6 +559,24 @@ struct Interpolator {
           boundary = a0 + sum_minus;
         }
       });
+  }
+
+  template<class HermiteView>
+  void computeFluxComponent(const StructuredLocator& hermite_locator,
+                   HermiteView hermite_data,
+                   int psi_component, int b_component0 = 0)
+  {
+
+    static_assert(HermiteView::rank == 5,
+                  "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
+
+    KOKKOS_ASSERT(psi_component < hermite_data.extent_int(2));
+
+    auto psi = Kokkos::subview(hermite_data,
+                               Kokkos::ALL(), Kokkos::ALL(), psi_component,
+                               Kokkos::ALL(), Kokkos::ALL());
+
+    computeFlux(hermite_locator, hermite_data, psi, b_component0);
   }
 };
 

@@ -2,7 +2,7 @@
 #include <iostream>
 
 #include "AnalyticField.hpp"
-#include "hFlux.hpp"
+#include "hFlux/hFlux.hpp"
 
 void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   static const int m = 2;

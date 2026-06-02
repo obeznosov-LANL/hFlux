@@ -11,16 +11,9 @@ add_hFlux_test(hermite_test
     hermite_test.input
 )
 
-add_hFlux_test(hermite_test_c
+add_hFlux_test(poincare_test_cpp
   SRCS
-    hermite_test.c
-  INPUT
-    hermite_test.input
-)
-
-add_hFlux_test(poincare_test_c
-  SRCS
-    poincare_test.c
+    poincare_test.cpp
   INPUT
     hermite_test.input
 )

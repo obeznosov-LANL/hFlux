@@ -19,20 +19,22 @@ ErrorCode findMagneticAxis(Real& R_center, Real& Z_center,
   Real ds = 0.5;
 
   Real last_fit = 0.0;
-  ErrorCode status =
-      ev.evalPsi(last_fit, R_center, Z_center, psi_data);
+  ErrorCode status = ev.locator.checkBounds(R_center, Z_center);
   if (status != ErrorCode::Success) {
     return status;
   }
+  ev.evalPsi(last_fit, R_center, Z_center, psi_data);
 
   fit = last_fit;
 
   for (int iter = 0; iter < max_iter; ++iter) {
     Dim3 B = {};
-    status = ev.evalField(B, R_center, Z_center, hermite_data);
+    status = ev.locator.checkBounds(R_center, Z_center);
     if (status != ErrorCode::Success) {
       return status;
     }
+
+    ev.evalField(B, R_center, Z_center, hermite_data);
 
     const Real gradx = B[2] * R_center;
     const Real grady = -B[0] * R_center;
@@ -48,14 +50,13 @@ ErrorCode findMagneticAxis(Real& R_center, Real& Z_center,
     Real R = R_center + sign * coeff * gradx;
     Real Z = Z_center + sign * coeff * grady;
 
-    status = ev.evalPsi(fit, R, Z, psi_data);
+    ErrorCode status = ev.locator.checkBounds(R, Z);
     if (status == ErrorCode::OutOfBounds) {
       ds *= beta;
       continue;
     }
-    if (status != ErrorCode::Success) {
-      return status;
-    }
+
+    ev.evalPsi(fit, R, Z, psi_data);
 
     const Real dfit = std::abs(fit - last_fit);
     const Real dx = R - R_center;

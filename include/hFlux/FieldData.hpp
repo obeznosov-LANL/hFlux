@@ -3,9 +3,8 @@
 #include "common.hpp"
 #include "StructuredLocator.hpp"
 
-template<int m, int swidth, typename ExecSpace>
+template<int m, int swidth,  typename ExecSpace, int ndims = 3>
 struct FieldData {
-  static constexpr int ndims = 3;
 
   StructuredLocator fd_locator;
   StructuredLocator hermite_locator;

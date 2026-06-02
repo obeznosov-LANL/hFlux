@@ -21,25 +21,40 @@ struct StructuredLocator {
         R1(R0 + nR * dR),
         Z1(Z0 + nZ * dZ) {};
 
-  KOKKOS_INLINE_FUNCTION
-  ErrorCode locate(const Real R, const Real Z,
-                   int& iR, int& iZ,
-                   Real& xiR, Real& xiZ) const {
+  ErrorCode checkBounds(const Real R, const Real Z) const {
 
     if (R < R0 || R > R1 || Z < Z0 || Z > Z1) {
       return ErrorCode::OutOfBounds;
     }
-
-    locate_1d(R, R0, dR, nR, iR, xiR);
-    locate_1d(Z, Z0, dZ, nZ, iZ, xiZ);
-
     return ErrorCode::Success;
   }
 
-private:
   KOKKOS_INLINE_FUNCTION
-  static void locate_1d(const Real x, const Real x0, const Real dx,
-                        const int n, int& i, Real& xi) {
+  void locateCell(const Real R, const Real Z,
+                   int& iR, int& iZ) const {
+
+    locateCell_1d(R, R0, dR, iR);
+    locateCell_1d(Z, Z0, dZ, iZ);
+  }
+
+
+  KOKKOS_INLINE_FUNCTION
+  void locate(const Real R, const Real Z,
+                   int& iR, int& iZ,
+                   Real& xiR, Real& xiZ) const {
+
+    locate_1d(R, R0, dR, iR, xiR);
+    locate_1d(Z, Z0, dZ, iZ, xiZ);
+  }
+
+private:
+  static void locateCell_1d(const Real x, const Real x0, const Real dx, int& i) {
+    const Real s = (x - x0) / dx;
+    i = static_cast<int>(floor(s));
+  };
+
+  KOKKOS_INLINE_FUNCTION
+  static void locate_1d(const Real x, const Real x0, const Real dx, int& i, Real& xi) {
     const Real s = (x - x0) / dx;
     i = static_cast<int>(floor(s));
     xi = s - i - 0.5;

@@ -2,10 +2,8 @@
 #include <cstdio>
 #include <iostream>
 #include "hFlux/dopri.hpp"
-#include "hFlux/FieldInterpolation.hpp"
 #include "hFlux/c_wrapper.h"
-
-constexpr int m = 2;
+#include "hFlux/hFlux.hpp"
 
 void hflux_kokkos_init() {
   Kokkos::initialize();
