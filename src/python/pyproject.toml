@@ -11,30 +11,35 @@
 # the public, perform publicly and display publicly, and to permit others to do so.
 #========================================================================================
 
-cmake_minimum_required(VERSION 3.10)
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-# Set the project name
-project(hflux
-  LANGUAGES C CXX
-  VERSION 0.1)
+[project]
+name = "hFlux"
+version = "0.1.0"
+description = "Pure-JAX implementation of hFlux interpolation routines"
+authors = [
+  { name = "Oleksii Beznosov", email = "obeznosov@lanl.gov" },
+  { name = "Philipp Edelmann", email = "pedelmann@lanl.gov" },
+  { name = "Jesus Bonilla", email = "jbonilla@lanl.gov" }
+]
+license = { text = "BSD-3" }
+requires-python = ">=3.9"
+dependencies = [
+  "jax>=0.4.0",
+  "jaxlib>=0.4.0",
+  "numpy>=1.23"
+]
+keywords = ["jax", "interpolation", "magnetic-field", "hermite"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+]
 
-# Set the C++ standard
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+[project.urls]
+"Repository" = "https://github.com/obeznosov-LANL/hFlux"
 
-find_package(HDF5 COMPONENTS C CXX)
-find_package(Kokkos REQUIRED)
-
-option(BUILD_SHARED_LIBS "Build shared library" ON)
-
-add_subdirectory(src)
-# We leave unit tests on by default in the early development stages.
-option(ENABLE_UNIT_TESTS "Enable unit tests" ON)
-mark_as_advanced(ENABLE_UNIT_TESTS)
-# tests
-if(ENABLE_UNIT_TESTS)
-  message("\nConfiguring tests")
-  enable_testing()
-  add_subdirectory(test)
-endif()
-
+[tool.setuptools.packages.find]
+where = ["src"]
