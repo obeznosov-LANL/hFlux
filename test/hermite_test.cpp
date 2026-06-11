@@ -41,7 +41,7 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   policy2D({0,0}, {nR_data,nZ_data}),
   KOKKOS_LAMBDA(int i, int j){
     // linearize: row-major numbering
-    auto sbv = Kokkos::subview(field_data, i, j, Kokkos::ALL);
+    auto sbv = Kokkos::subview(field_data.view_device(), i, j, Kokkos::ALL);
 
     Real R = R0 + dR * i, Z = Z0 + dZ * j;
     Dim3 B = {};
@@ -53,22 +53,22 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   Interpolator<m, swidth> itrp;
   itrp.interpolate(data.fd_locator,
       data.hermite_locator,
-      data.data,
-      data.hermite_data);
+      data.data.view_device(),
+      data.hermite_data.view_device());
+
+  data.hermite_data.modify_device();  // Mark hermite data as modified
 
   itrp.computeFlux(data.hermite_locator,
-      data.hermite_data,
-      data.psi_data);
+      data.hermite_data.view_device(),
+      data.psi_data.view_device());
+
+  data.psi_data.modify_device();  // Mark psi data as modified
 
   itrp.cleanDivergence(data.hermite_locator,
-      data.hermite_data);
+      data.hermite_data.view_device());
 
+  data.hermite_data.modify_device();  // Hermite data was modified again
 
-
-  Kokkos::fence();
-
-  auto hermite_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, hermite_data);
-  auto psi_hermite_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, data.psi_data);
 
   // Find MA center
   Real R_center = 3.2;
@@ -78,9 +78,12 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
 
   Evaluator ev{data.hermite_locator};
 
+  data.hermite_data.sync_host();
+  data.psi_data.sync_host();
+
   findMagneticAxis(R_center, Z_center,
-              hermite_host,
-              psi_hermite_host,
+              data.hermite_data.view_host(),
+              data.psi_data.view_host(),
               ev,
               descent,
               Psi_min);
@@ -90,8 +93,9 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   Kokkos::parallel_for("Normalize psi",
   policy2D({0,0}, {nR,nZ}),
   KOKKOS_LAMBDA(int i, int j){
-    data.psi_data(0,0,i,j) -= Psi_min;
+    data.psi_data.view_device()(0,0,i,j) -= Psi_min;
   });
+  data.psi_data.modify_device();
 
   l2err = {};
 
@@ -117,8 +121,8 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
     Dim3 B = {}, B_exact = {};
     Real Psi = 0., Psi_exact = 0.;
 
-    ev.evalField(B, R, Z, data.hermite_data);
-    ev.evalPsi(Psi, R, Z, data.psi_data);
+    ev.evalField(B, R, Z, data.hermite_data.view_device());
+    ev.evalPsi(Psi, R, Z, data.psi_data.view_device());
 
     af.eval(B_exact, R, Z);
     Psi_exact = af.Psi(R, Z);
@@ -137,7 +141,6 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
     err_psi += pow(Psi_exact - Psi, 2);
   }, l2err[0], l2err[1], l2err[2], l2err[3]);
 
-  Kokkos::fence();
 //  auto psi_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_psi);
 //  auto psi_exact_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_psi_exact);
 //  auto B_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_B);
