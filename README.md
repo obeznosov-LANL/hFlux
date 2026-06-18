@@ -19,17 +19,45 @@ hFlux -- lightweight toolkit for tokamak simulation code diagnostics.
 
 - **CMake ≥ 3.10**  
 - A C++ compiler supporting **C++23**
+- HDF5 1.12 or newer
+- Kokkos 4.4.01
+- Cuda 12.6.2 or newer if GPU support is required
+
+Additionally Python interface requires:
+- Numpy
+- Scipy
+- Matplotlib
 
 You can verify your CMake version by running `cmake --version`. Make sure your compiler (e.g., GCC, Clang, MSVC) supports C++23.
 
 
 ## Build instructions
+Create suggested directory structure:
 ```console
-~$ cmake -Bbuild
-~$ cd build; make
+hFlux-project/
+├── sources/
+├── build/
+├── install/
 ```
-Now you can access library through Julia interface. Coherent C, C++ and python interfaces are in the works
+Clone the repository under `hFlux-project/sources`. From `hFlux-project/build` run:
 
+```console
+~$ ../../source/hFlux                           \
+    -DCMAKE_BUILD_TYPE=Debug                    \
+    -DCMAKE_INSTALL_PREFIX=../../install/hFlux  \
+    -DKokkos_DIR=__path_to_KokkosConfig.cmake__ \
+    -DHDF5_DIR=__path_to_hdf5_install_dir__
+~$ make -j install
+```
+
+Now you can access library through Julia interface. Coherent C and C++ interfaces are in the works.
+Python interface can be found under `hFlux-project/install/python`. To use hFlux in your python applicaions add the pervious directory to enviroment variable `PYTHONPATH` and import hFlux module, e.g.,
+
+```console
+~$ export PYTHONPATH="${PYTHONPATH}:__path_to_project__/hFlux-project/install/python"
+~$ python
+>>> import hFlux
+```
 
 # Release
 O4754 hFlux was approved for Open-Source Assertion
