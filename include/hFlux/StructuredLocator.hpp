@@ -21,6 +21,7 @@ struct StructuredLocator {
         R1(R0 + nR * dR),
         Z1(Z0 + nZ * dZ) {};
 
+  KOKKOS_INLINE_FUNCTION
   ErrorCode checkBounds(const Real R, const Real Z) const {
 
     if (R < R0 || R > R1 || Z < Z0 || Z > Z1) {
@@ -48,6 +49,7 @@ struct StructuredLocator {
   }
 
 private:
+  KOKKOS_INLINE_FUNCTION
   static void locateCell_1d(const Real x, const Real x0, const Real dx, int& i) {
     const Real s = (x - x0) / dx;
     i = static_cast<int>(floor(s));
