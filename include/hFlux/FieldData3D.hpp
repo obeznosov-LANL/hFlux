@@ -5,7 +5,7 @@
 #include "StructuredLocator.hpp"
 
 template<int m, int swidth,  typename ExecSpace, int ndims=3>
-struct FieldData {
+struct FieldData3D {
   using DataView =
       Kokkos::DualView<Real***, Kokkos::LayoutRight, ExecSpace>;
   using HermiteView =
@@ -20,7 +20,7 @@ struct FieldData {
   HermiteView hermite_data;
   PsiView psi_data;
 
-  FieldData(int nR_data, int nZ_data, int nPhi_data,
+  FieldData3D(int nR_data, int nZ_data, int nPhi_data,
                       Real R0, Real Z0, Real dR, Real dZ)
       : fd_locator(R0, Z0, dR, dZ, nR_data - 1, nZ_data - 1),
         hermite_locator(makeHermiteLocator<swidth>(fd_locator)),
