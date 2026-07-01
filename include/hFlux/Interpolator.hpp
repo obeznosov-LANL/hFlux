@@ -191,9 +191,9 @@ void interpolate_grid (HermiteView hermite_data) {
   const size_t n2 = hermite_data.extent(4);
 
   Kokkos::parallel_for("interpolate",
-  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n0, n1, n2}),
-  KOKKOS_LAMBDA(int i, int j) {
-    auto sbv_hermite_data = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, i, j);
+  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>({0,0,0},{n0, n1, n2}),
+  KOKKOS_LAMBDA(int component, int i, int j) {
+    auto sbv_hermite_data = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, component, i, j);
     interpolate2D<m>(sbv_hermite_data);
   });
 }
@@ -209,7 +209,7 @@ struct Interpolator {
     const Real scaleR = hermite_locator.dR / fd_locator.dR;
     const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
 
-    compute_derivatives_grid<m, swidth>(dd, hh, scaleR, scaleZ);
+    compute_derivatives_grid<m, swidth>(data, hermite_data, scaleR, scaleZ);
     interpolate_grid<m>(hh);
   }
 
@@ -237,7 +237,7 @@ struct Interpolator {
                    HermiteView hermite_data,
                    int component) const {
 
-     interpolateComponentRange<1>(fd_locator, hermite_locator, data, hermite_data, component);
+     interpolateRange<1>(fd_locator, hermite_locator, data, hermite_data, component);
   }
 
 
