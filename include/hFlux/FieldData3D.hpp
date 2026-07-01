@@ -55,6 +55,11 @@ struct FieldData3D {
 
   KOKKOS_INLINE_FUNCTION
   static int fourier_component(int channel, int d) {
+    return ndims * channel + d;
+  }
+
+  KOKKOS_INLINE_FUNCTION
+  static int fourier_component_with_correction(int channel, int d) {
     return (ndims+1) * channel + d;
   }
 

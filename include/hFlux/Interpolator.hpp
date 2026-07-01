@@ -89,22 +89,23 @@ template<int m, int swidth, class DataView, class HermiteView>
 void compute_derivatives_grid (DataView data, HermiteView hermite_data,
                          const Real ratioR, const Real ratioZ) {
 
-  static_assert(DataView::rank == 2);
-  static_assert(HermiteView::rank == 4);
+  static_assert(DataView::rank == 3);
+  static_assert(HermiteView::rank == 5);
 
   KOKKOS_ASSERT(ratioR > 1.0);
   KOKKOS_ASSERT(ratioZ > 1.0);
 
   using exec_space = typename HermiteView::execution_space;
 
-  const size_t n1 = hermite_data.extent(2);
-  const size_t n2 = hermite_data.extent(3);
+  const size_t n0 = hermite_data.extent(2);
+  const size_t n1 = hermite_data.extent(3);
+  const size_t n2 = hermite_data.extent(4);
 
   Kokkos::deep_copy(hermite_data, 0.0);
 
   Kokkos::parallel_for("compute_derivatives",
-  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n1, n2}),
-  KOKKOS_LAMBDA(int i, int j) {
+  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>({0,0,0}, {n0, n1, n2}),
+  KOKKOS_LAMBDA(int component, int i, int j) {
     for (int offx = 0; offx < 2; ++offx) {
       for (int offy = 0; offy < 2; ++offy) {
         int ii = (i + offx) * (swidth-1);
@@ -113,9 +114,9 @@ void compute_derivatives_grid (DataView data, HermiteView hermite_data,
         int idy = (m+1) * offy;
 
         auto data_stencil = Kokkos::subview(data,
-            Kokkos::make_pair(ii, ii + swidth), Kokkos::make_pair(jj, jj + swidth));
+            Kokkos::make_pair(ii, ii + swidth), Kokkos::make_pair(jj, jj + swidth), component);
         auto hermite_data_cell = Kokkos::subview(hermite_data,
-            Kokkos::make_pair(idx, idx + m+1), Kokkos::make_pair(idy, idy + m+1), i, j);
+            Kokkos::make_pair(idx, idx + m+1), Kokkos::make_pair(idy, idy + m+1), component, i, j);
 
         computeDerivativesStencil<m, swidth>(data_stencil, hermite_data_cell, ratioR, ratioZ);
       }
@@ -181,15 +182,16 @@ void interpolate2D(ViewHermiteData view_hermite_data) {
 
 template<int m, class HermiteView>
 void interpolate_grid (HermiteView hermite_data) {
-  static_assert(HermiteView::rank == 4);
+  static_assert(HermiteView::rank == 5);
 
   using exec_space = typename HermiteView::execution_space;
 
-  const size_t n1 = hermite_data.extent(2);
-  const size_t n2 = hermite_data.extent(3);
+  const size_t n0 = hermite_data.extent(2);
+  const size_t n1 = hermite_data.extent(3);
+  const size_t n2 = hermite_data.extent(4);
 
   Kokkos::parallel_for("interpolate",
-  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n1, n2}),
+  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n0, n1, n2}),
   KOKKOS_LAMBDA(int i, int j) {
     auto sbv_hermite_data = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, i, j);
     interpolate2D<m>(sbv_hermite_data);
@@ -199,14 +201,10 @@ void interpolate_grid (HermiteView hermite_data) {
 template<int m, int swidth = 7>
 struct Interpolator {
   template<class DataView, class HermiteView>
-  void interpolateComponent(const StructuredLocator& fd_locator,
+  void interpolate(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
-                   HermiteView hermite_data,
-                   int component) const {
-
-		auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, component);
-		auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, component, Kokkos::ALL, Kokkos::ALL);
+                   HermiteView hermite_data) const {
 
     const Real scaleR = hermite_locator.dR / fd_locator.dR;
     const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
@@ -215,33 +213,32 @@ struct Interpolator {
     interpolate_grid<m>(hh);
   }
 
+
   template<int ncomp, class DataView, class HermiteView>
   void interpolateRange(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
                    HermiteView hermite_data, int component0 = 0) const {
-
      KOKKOS_ASSERT(component0 >= 0);
      KOKKOS_ASSERT(component0 + ncomp <= data.extent_int(2));
      KOKKOS_ASSERT(component0 + ncomp <= hermite_data.extent_int(2));
 
-		 for (int i = 0; i < ncomp; ++i) {
-       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, component0 + i);
-     }
+
+		auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, Kokkos::make_pair(component0, component0 + ncomp));
+		auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::make_pair(component0, component0 + ncomp), Kokkos::ALL, Kokkos::ALL);
+
+    interpolate(fd_locator, hermite_locator, dd, hh);
   }
 
   template<class DataView, class HermiteView>
-  void interpolate(const StructuredLocator& fd_locator,
+  void interpolateComponent(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
-                   HermiteView hermite_data) const {
+                   HermiteView hermite_data,
+                   int component) const {
 
-    const int ncomp = data.extent_int(2);
-		for (int i = 0; i < ncomp; ++i) {
-       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, i);
-    }
+     interpolateComponentRange<1>(fd_locator, hermite_locator, data, hermite_data, component);
   }
-
 
 
 
@@ -251,7 +248,7 @@ struct Interpolator {
     static_assert(HermiteView::rank == 5,
                   "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
     KOKKOS_ASSERT(component0 >= 0);
-    KOKKOS_ASSERT(component0 + 2 < hermite_data.extent_int(2));
+    KOKKOS_ASSERT(component0 + (nfields - 1) * component_stride + 2 < hermite_data.extent_int(2));
 
     using scalar_t = typename HermiteView::non_const_value_type;
 
