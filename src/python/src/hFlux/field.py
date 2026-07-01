@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 import jax
 import jax.numpy as jnp
 
+from .dopri import solve_dopri5
 from .flux import clean_divergence, compute_flux
 from .interpolate import interpolate
 from .locator import StructuredLocator, make_hermite_locator
@@ -179,3 +180,74 @@ class FieldInterpolation:
 
     def vmap_eval_psi(self, R, Z):
         return jax.vmap(self.eval_psi)(R, Z)
+
+    def field_line_rhs(self, phi, x, component0: int = 0):
+        """Return `(dR/dphi, dZ/dphi)` for one field-line point."""
+
+        del phi
+        R, Z = x
+        RB = self.eval_field(R, Z)[component0 : component0 + 3]
+        return jnp.array((RB[0] / RB[1] * R, RB[2] / RB[1] * R), dtype=RB.dtype)
+
+    def trace_field_line(
+        self,
+        seed,
+        n_turn: int,
+        component0: int = 0,
+        rtol: float = 1.0e-10,
+        atol: float = 1.0e-12,
+        h: float = 1.0e-6,
+        hmin: float = 1.0e-10,
+        nmax: int = 2_000_000,
+    ):
+        """Trace one field line and return `(n_turn + 1, 2)` Poincare points."""
+
+        seed = jnp.asarray(seed)
+        two_pi = jnp.asarray(2.0 * jnp.pi, dtype=seed.dtype)
+
+        def one_turn(x, _):
+            x_next = solve_dopri5(
+                lambda phi, state: self.field_line_rhs(phi, state, component0),
+                x,
+                0.0,
+                two_pi,
+                rtol=rtol,
+                atol=atol,
+                h=h,
+                hmin=hmin,
+                nmax=nmax,
+            )
+            return x_next, x_next
+
+        _last, turns = jax.lax.scan(one_turn, seed, xs=None, length=n_turn)
+        return jnp.concatenate((seed[None, :], turns), axis=0)
+
+    def compute_poincare(self, seeds, n_turn: int, **kwargs):
+        """Trace seeds and return `(n_traces, n_turn + 1, 2)` Poincare data."""
+
+        seeds = jnp.asarray(seeds)
+        if seeds.ndim != 2 or seeds.shape[1] != 2:
+            raise ValueError("seeds must have shape (n_traces, 2)")
+        return jax.vmap(lambda seed: self.trace_field_line(seed, n_turn, **kwargs))(seeds)
+
+    def plot_poincare(self, seeds, n_turn: int, ax=None, **kwargs):
+        """Plot Poincare points for `seeds` using matplotlib and return `(fig, ax, data)`."""
+
+        try:
+            import matplotlib.pyplot as plt
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError("matplotlib is required for plot_poincare") from exc
+
+        data = self.compute_poincare(seeds, n_turn, **kwargs)
+        data_np = jax.device_get(data)
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
+
+        for trace in data_np:
+            ax.plot(trace[:, 0], trace[:, 1], ".", ms=1.5)
+        ax.set_xlabel("R")
+        ax.set_ylabel("Z")
+        ax.set_aspect("equal", adjustable="box")
+        return fig, ax, data

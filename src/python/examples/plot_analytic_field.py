@@ -47,12 +47,22 @@ def build_parser():
     parser.add_argument("--plot-nZ", type=int, default=320, help="number of plotted Z samples")
     parser.add_argument("--m", type=int, default=2, help="Hermite interpolation order parameter")
     parser.add_argument("--swidth", type=int, default=7, choices=(5, 7, 9), help="finite-difference stencil width")
+    parser.add_argument("--poincare-rays", type=int, default=10, help="number of angular seed rays")
+    parser.add_argument("--poincare-radial", type=int, default=10, help="number of radial seeds per ray")
+    parser.add_argument("--poincare-turns", type=int, default=20, help="number of Poincare turns to trace")
+    parser.add_argument("--poincare-h", type=float, default=1.0e-3, help="initial Dormand-Prince step for Poincare tracing")
     parser.add_argument("--outdir", type=pathlib.Path, default=pathlib.Path("analytic_plots"), help="output directory")
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.poincare_rays <= 0:
+        raise SystemExit("--poincare-rays must be positive")
+    if args.poincare_radial <= 0:
+        raise SystemExit("--poincare-radial must be positive")
+    if args.poincare_turns < 0:
+        raise SystemExit("--poincare-turns must be non-negative")
 
     try:
         import matplotlib.pyplot as plt
@@ -161,8 +171,58 @@ def main(argv=None):
     fig.savefig(psi_path, dpi=160)
     plt.close(fig)
 
+    distance_to_edge = min(
+        axis.R - field.hermite_locator.R0,
+        field.hermite_locator.R1 - axis.R,
+        axis.Z - field.hermite_locator.Z0,
+        field.hermite_locator.Z1 - axis.Z,
+    )
+    rmax = (2.0 / 3.0) * distance_to_edge
+    if rmax <= 0.01:
+        raise SystemExit(f"not enough room for requested seed ray: rmax={rmax:.6e}")
+
+    theta = jnp.arange(args.poincare_rays) * 2.0 * jnp.pi / args.poincare_rays
+    radius = jnp.linspace(0.01, rmax, args.poincare_radial)
+    dR_seed = radius[:, None] * jnp.cos(theta)[None, :]
+    dZ_seed = radius[:, None] * jnp.sin(theta)[None, :]
+    seeds_grid = jnp.stack((axis.R + dR_seed, axis.Z + dZ_seed), axis=-1)
+    seeds = seeds_grid.reshape(-1, 2)
+
+    print(
+        f"Tracing Poincare data for {seeds.shape[0]} seeds "
+        f"({args.poincare_rays} rays x {args.poincare_radial} radii), "
+        f"{args.poincare_turns + 1} points including seed..."
+    )
+    compute_poincare = jax.jit(lambda x: field.compute_poincare(x, n_turn=args.poincare_turns, h=args.poincare_h))
+    poincare = compute_poincare(seeds)
+    expected_shape = (args.poincare_rays * args.poincare_radial, args.poincare_turns + 1, 2)
+    if poincare.shape != expected_shape:
+        raise RuntimeError(f"expected Poincare data shape {expected_shape}, got {poincare.shape}")
+
+    poincare_np = jax.device_get(poincare)
+    fig, ax = plt.subplots(figsize=(7, 9), constrained_layout=True)
+    levels = 40
+    contour = ax.contourf(R_np, Z_np, psi_np, levels=levels, cmap="viridis")
+    ax.contour(R_np, Z_np, psi_np, levels=levels, colors="k", linewidths=0.25, alpha=0.35)
+    fig.colorbar(contour, ax=ax, label="psi")
+    colors = plt.cm.twilight(jax.device_get(jnp.linspace(0.0, 1.0, args.poincare_rays, endpoint=False)))
+    for j in range(args.poincare_rays):
+        ray_traces = poincare_np[j :: args.poincare_rays]
+        for trace in ray_traces:
+            ax.plot(trace[:, 0], trace[:, 1], ".", color=colors[j], ms=2.0)
+    ax.plot(axis.R, axis.Z, "x", color="white", ms=7, mew=1.5, label="magnetic axis")
+    ax.set_title(f"Poincare points on normalized psi ({args.poincare_turns + 1} points/seed)")
+    ax.set_xlabel("R")
+    ax.set_ylabel("Z")
+    ax.set_aspect("equal", adjustable="box")
+    ax.legend(loc="upper right")
+    poincare_path = args.outdir / "analytic_poincare_on_psi.png"
+    fig.savefig(poincare_path, dpi=180)
+    plt.close(fig)
+
     print(f"Wrote {field_path}")
     print(f"Wrote {psi_path}")
+    print(f"Wrote {poincare_path}")
     return 0
 
 

@@ -108,3 +108,35 @@ def test_magnetic_axis_and_flux_normalization():
     assert axis.R == pytest.approx(3.0, abs=2.0e-3)
     assert axis.Z == pytest.approx(0.0, abs=2.0e-3)
     assert float(field.eval_psi(axis.R, axis.Z)) == pytest.approx(0.0, abs=1.0e-10)
+
+
+def test_dopri5_integrates_exponential_growth():
+    y = hf.solve_dopri5(lambda _t, state: state, jnp.array([1.0]), 0.0, 1.0, h=1.0e-3)
+
+    assert y[0] == pytest.approx(float(jnp.e), rel=1.0e-8)
+
+
+def test_poincare_trace_matches_analytic_circular_orbit():
+    R0 = 1.525
+    Z0 = -2.975
+    dR0 = 0.0345
+    dZ0 = 0.02975
+    R1 = R0 + 99 * dR0
+    Z1 = Z0 + 199 * dZ0
+    nR = 31
+    nZ = 43
+    dR = (R1 - R0) / (nR - 1)
+    dZ = (Z1 - Z0) / (nZ - 1)
+
+    R = R0 + dR * jnp.arange(nR)
+    Z = Z0 + dZ * jnp.arange(nZ)
+    RR, ZZ = jnp.meshgrid(R, Z, indexing="ij")
+    data = analytic_field(RR, ZZ) * RR[..., None]
+    field = hf.FieldInterpolation.from_grid(data, R0=R0, Z0=Z0, dR=dR, dZ=dZ, m=2, swidth=7)
+
+    seed = jnp.array([[3.2, 0.0]])
+    poincare = field.compute_poincare(seed, n_turn=2, h=1.0e-3)
+
+    assert poincare.shape == (1, 3, 2)
+    assert poincare[0, -1, 0] == pytest.approx(float(seed[0, 0]), abs=1.0e-4)
+    assert poincare[0, -1, 1] == pytest.approx(float(seed[0, 1]), abs=1.0e-4)

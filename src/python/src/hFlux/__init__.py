@@ -15,6 +15,7 @@ from jax import config as _jax_config
 
 _jax_config.update("jax_enable_x64", True)
 
+from .dopri import dopri5_step, solve_dopri5, solve_dopri5_fixed
 from .field import FieldInterpolation, MagneticAxis
 from .flux import clean_divergence, compute_flux
 from .interpolate import interpolate
@@ -28,8 +29,11 @@ __all__ = [
     "StructuredLocator",
     "clean_divergence",
     "compute_flux",
+    "dopri5_step",
     "eval_taylor",
     "fdw",
     "interpolate",
     "make_hermite_locator",
+    "solve_dopri5",
+    "solve_dopri5_fixed",
 ]
