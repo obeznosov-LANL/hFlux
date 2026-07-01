@@ -4,10 +4,11 @@
 #include "FiniteDifferenceWeights.hpp"
 #include "StructuredLocator.hpp"
 
-template <class RBZView, class Scalar>
+template <class View, class Scalar>
 KOKKOS_INLINE_FUNCTION
-void eval_nonconst_at_half(const RBZView& RBZ,
+void eval_nonconst_at_half(const View& hermite_data,
                            const int idR,
+                           const int component,
                            const int iRcell,
                            const int iZcell,
                            const int Pz,
@@ -22,7 +23,7 @@ void eval_nonconst_at_half(const RBZView& RBZ,
   Scalar p_plus  = Scalar(0.5);   // (+0.5)^1
   Scalar p_minus = Scalar(-0.5);  // (-0.5)^1
   for (int k = 1; k < Pz; ++k) {
-    const Scalar ak = RBZ(idR, k, iRcell, iZcell);
+    const Scalar ak = hermite_data(idR, k, component, iRcell, iZcell);
     sum_plus  += ak * p_plus;
     sum_minus += ak * p_minus;
     p_plus  *= Scalar(0.5);
@@ -34,6 +35,7 @@ template <class View, class Scalar>
 KOKKOS_INLINE_FUNCTION
 Scalar eval_z_at(const View& data,
                  const int idR,
+                 const int component,
                  const int iRcell,
                  const int iZcell,
                  const int Pz,
@@ -42,7 +44,7 @@ Scalar eval_z_at(const View& data,
   Scalar sum = Scalar(0);
   Scalar p = Scalar(1);
   for (int idZ = 0; idZ < Pz; ++idZ) {
-    sum += data(idR, idZ, iRcell, iZcell) * p;
+    sum += data(idR, idZ, component, iRcell, iZcell) * p;
     p *= zeta;
   }
 
@@ -244,7 +246,7 @@ struct Interpolator {
 
 
   template<class HermiteView>
-  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0)
+  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0, int nfields = 1, int component_stride = 3)
   {
     static_assert(HermiteView::rank == 5,
                   "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
@@ -254,54 +256,45 @@ struct Interpolator {
     using scalar_t = typename HermiteView::non_const_value_type;
 
     // hermite_data(idR, idZ, di, iR, iZ)
-    // Subviews become rank-4: (idR, idZ, iR, iZ)
-    auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0,
-                               Kokkos::ALL(), Kokkos::ALL());
-    auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
-                               Kokkos::ALL(), Kokkos::ALL());
 
-    const int Pr   = RBZ.extent_int(0);  // # idR coefficients
-    const int Pz   = RBZ.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
-    const int nR   = RBZ.extent_int(2);  // # radial cells
-    const int nZ   = RBZ.extent_int(3);  // # axial cells
-
-    const int PrBR = RBR.extent_int(0);
-    const int PzBR = RBR.extent_int(1);
+    const int Pr   = hermite_data.extent_int(0);  // # idR coefficients
+    const int Pz   = hermite_data.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
+    const int nR   = hermite_data.extent_int(3);  // # radial cells
+    const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
     const int iZ0 = nZ / 2;
 
     const scalar_t hZ_over_hR = static_cast<scalar_t>(hermite_locator.dZ / hermite_locator.dR);
 
     using exec_space = typename HermiteView::execution_space;
-    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
 
     // One work-item per (iRcell, idR). Inside we do:
     //  (1) local fill of non-constant z-coeffs from RBR
     //  (2) O(nZ) marching integration for the constant term a0 to enforce continuity
-    Kokkos::parallel_for("cleanDivergence", policy_t({0, 0}, {nR, Pr}),
-      KOKKOS_LAMBDA(const int iRcell, const int idR)
+    Kokkos::parallel_for("cleanDivergence", policy_t({0, 0, 0}, {nfields, nR, Pr}),
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
       {
+        int base = component0 + ifield * component_stride;
         // Anchor: preserve the existing constant coefficient at the center plane
-        const scalar_t a0_center = RBZ(idR, 0, iRcell, iZ0);
+        const scalar_t a0_center = hermite_data(idR, 0, base + 2, iRcell, iZ0);
 
         // --- (1) Fill non-constant Z coefficients from RBR (and init a0 everywhere to anchor)
         // RBZ(idR,k) = - RBR(idR+1,k-1) * (hZ/hR) * (idR+1)/k   for k>=1
         const scalar_t scale = -hZ_over_hR * static_cast<scalar_t>(idR + 1);
 
         for (int iZcell = 0; iZcell < nZ; ++iZcell) {
-          RBZ(idR, 0, iRcell, iZcell) = a0_center;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0_center;
 
           for (int k = 1; k < Pz; ++k) {
             scalar_t val = scalar_t(0);
 
             // Bounds-checked so we never read past RBR extents
-            if ((idR + 1) < PrBR && (k - 1) < PzBR) {
-              val = RBR(idR + 1, k - 1, iRcell, iZcell) * scale / static_cast<scalar_t>(k);
+            if ((idR + 1) < Pr && (k - 1) < PzBR) {
+              val = hermite_data(idR + 1, k - 1, base + 0, iRcell, iZcell) * scale / static_cast<scalar_t>(k);
             }
 
-            RBZ(idR, k, iRcell, iZcell) = val;
+            hermite_data(idR, k, base + 2, iRcell, iZcell) = val;
           }
         }
 
@@ -310,7 +303,7 @@ struct Interpolator {
         // Center cell non-constant contributions at boundaries:
         scalar_t sum_plus0  = scalar_t(0);
         scalar_t sum_minus0 = scalar_t(0);
-        eval_nonconst_at_half(RBZ, idR, iRcell, iZ0, Pz, sum_plus0, sum_minus0);
+        eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZ0, Pz, sum_plus0, sum_minus0);
 
         // Center cell boundary values:
         scalar_t boundary_top    = a0_center + sum_plus0;   // at Δz = +0.5
@@ -321,11 +314,11 @@ struct Interpolator {
         for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
           scalar_t sum_plus  = scalar_t(0);
           scalar_t sum_minus = scalar_t(0);
-          eval_nonconst_at_half(RBZ, idR, iRcell, iZcell, Pz, sum_plus, sum_minus);
+          eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZcell, Pz, sum_plus, sum_minus);
 
           // Want: a0 + sum_minus == boundary   (match at Δz = -0.5)
           const scalar_t a0 = boundary - sum_minus;
-          RBZ(idR, 0, iRcell, iZcell) = a0;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0;
 
           // Next boundary is this cell's top boundary (Δz = +0.5)
           boundary = a0 + sum_plus;
@@ -336,11 +329,11 @@ struct Interpolator {
         for (int iZcell = iZ0; iZcell-- > 0; ) { // iZ0-1 ... 0 (safe even if iZ0==0)
           scalar_t sum_plus  = scalar_t(0);
           scalar_t sum_minus = scalar_t(0);
-          eval_nonconst_at_half(RBZ, idR, iRcell, iZcell, Pz, sum_plus, sum_minus);
+          eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZcell, Pz, sum_plus, sum_minus);
 
           // Want: a0 + sum_plus == boundary    (match at Δz = +0.5)
           const scalar_t a0 = boundary - sum_plus;
-          RBZ(idR, 0, iRcell, iZcell) = a0;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0;
 
           // Next boundary is this cell's bottom boundary (Δz = -0.5)
           boundary = a0 + sum_minus;
@@ -369,21 +362,12 @@ struct Interpolator {
     // di - field component index: 0 - RB_R, 1 - RB_phi, 2 - RB_Z
     // iR - cell index in R
     // iZ - cell index in Z
-    // Subviews become rank-4: (idR, idZ, iR, iZ)
-    auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0,
-                               Kokkos::ALL(), Kokkos::ALL());
-    auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
-                               Kokkos::ALL(), Kokkos::ALL());
 
-    const int Pr   = RBZ.extent_int(0);  // # idR coefficients in RB_Z
-    const int Pz   = RBZ.extent_int(1);  // # idZ coefficients in RB_Z
-    const int nR   = RBZ.extent_int(2);  // # radial cells
-    const int nZ   = RBZ.extent_int(3);  // # axial cells
+    const int Pr   = hermite_data.extent_int(0);  // # idR coefficients in RB_Z
+    const int Pz   = hermite_data.extent_int(1);  // # idZ coefficients in RB_Z
+    const int nR   = hermite_data.extent_int(3);  // # radial cells
+    const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
-    const int PrBR = RBR.extent_int(0);
-    const int PzBR = RBR.extent_int(1);
 
     const int PpsiR = psi_hermite_data.extent_int(0);
     const int PpsiZ = psi_hermite_data.extent_int(1);
@@ -411,7 +395,7 @@ struct Interpolator {
 
           for (int idZ = 1; idZ < PpsiZ; ++idZ) {
             scalar_t val = scalar_t(0);
-            if (idR < PrBR && (idZ - 1) < PzBR) {
+            if (idR < Pr && (idZ - 1) < Pz) {
               val = -hZ_s * RBR(idR, idZ - 1, iRcell, iZcell) /
                     static_cast<scalar_t>(idZ);
             }
@@ -485,7 +469,7 @@ struct Interpolator {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t z_anchor_coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              z_anchor_coeff = eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half);
+              z_anchor_coeff = eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half);
             }
 
             psi_hermite_data(idR, 0, iRcell, iZcell) +=
@@ -501,7 +485,7 @@ struct Interpolator {
         for (int idR = 1; idR < PpsiR; ++idR) {
           scalar_t coeff = scalar_t(0);
           if ((idR - 1) < Pr) {
-            coeff = hR_s * eval_z_at(RBZ, idR - 1, iR0, iZ0, Pz, minus_half) /
+            coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iR0, iZ0, Pz, minus_half) /
                     static_cast<scalar_t>(idR);
           }
           sum_plus += coeff * p_plus;
@@ -522,7 +506,7 @@ struct Interpolator {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              coeff = hR_s * eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
                       static_cast<scalar_t>(idR);
             }
             sum_plus += coeff * p_plus;
@@ -545,7 +529,7 @@ struct Interpolator {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              coeff = hR_s * eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
                       static_cast<scalar_t>(idR);
             }
             sum_plus += coeff * p_plus;
