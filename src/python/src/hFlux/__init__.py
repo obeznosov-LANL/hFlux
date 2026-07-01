@@ -11,30 +11,29 @@
 # the public, perform publicly and display publicly, and to permit others to do so.
 #========================================================================================
 
-cmake_minimum_required(VERSION 3.10)
+from jax import config as _jax_config
 
-# Set the project name
-project(hflux
-  LANGUAGES C CXX
-  VERSION 0.1)
+_jax_config.update("jax_enable_x64", True)
 
-# Set the C++ standard
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+from .dopri import dopri5_step, solve_dopri5, solve_dopri5_fixed
+from .field import FieldInterpolation, MagneticAxis
+from .flux import clean_divergence, compute_flux
+from .interpolate import interpolate
+from .locator import StructuredLocator, make_hermite_locator
+from .taylor import eval_taylor
+from .weights import fdw
 
-find_package(HDF5 COMPONENTS C CXX)
-find_package(Kokkos REQUIRED)
-
-option(BUILD_SHARED_LIBS "Build shared library" ON)
-
-add_subdirectory(src)
-# We leave unit tests on by default in the early development stages.
-option(ENABLE_UNIT_TESTS "Enable unit tests" ON)
-mark_as_advanced(ENABLE_UNIT_TESTS)
-# tests
-if(ENABLE_UNIT_TESTS)
-  message("\nConfiguring tests")
-  enable_testing()
-  add_subdirectory(test)
-endif()
-
+__all__ = [
+    "FieldInterpolation",
+    "MagneticAxis",
+    "StructuredLocator",
+    "clean_divergence",
+    "compute_flux",
+    "dopri5_step",
+    "eval_taylor",
+    "fdw",
+    "interpolate",
+    "make_hermite_locator",
+    "solve_dopri5",
+    "solve_dopri5_fixed",
+]

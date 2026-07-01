@@ -10,31 +10,17 @@
 # license in this material to reproduce, prepare derivative works, distribute copies to
 # the public, perform publicly and display publicly, and to permit others to do so.
 #========================================================================================
+from __future__ import annotations
 
-cmake_minimum_required(VERSION 3.10)
+import jax.numpy as jnp
 
-# Set the project name
-project(hflux
-  LANGUAGES C CXX
-  VERSION 0.1)
 
-# Set the C++ standard
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+def eval_taylor(coeffs, x, y):
+    """Evaluate sum_ij coeffs[..., i, j] * x**i * y**j."""
 
-find_package(HDF5 COMPONENTS C CXX)
-find_package(Kokkos REQUIRED)
-
-option(BUILD_SHARED_LIBS "Build shared library" ON)
-
-add_subdirectory(src)
-# We leave unit tests on by default in the early development stages.
-option(ENABLE_UNIT_TESTS "Enable unit tests" ON)
-mark_as_advanced(ENABLE_UNIT_TESTS)
-# tests
-if(ENABLE_UNIT_TESTS)
-  message("\nConfiguring tests")
-  enable_testing()
-  add_subdirectory(test)
-endif()
-
+    coeffs = jnp.asarray(coeffs)
+    px = coeffs.shape[-2]
+    py = coeffs.shape[-1]
+    xp = x ** jnp.arange(px, dtype=coeffs.dtype)
+    yp = y ** jnp.arange(py, dtype=coeffs.dtype)
+    return jnp.einsum("...ij,i,j->...", coeffs, xp, yp)
