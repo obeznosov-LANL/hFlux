@@ -287,7 +287,7 @@ struct Interpolator {
             scalar_t val = scalar_t(0);
 
             // Bounds-checked so we never read past RBR extents
-            if ((idR + 1) < Pr && (k - 1) < PzBR) {
+            if ((idR + 1) < Pr && (k - 1) < Pz) {
               val = hermite_data(idR + 1, k - 1, base + 0, iRcell, iZcell) * scale / static_cast<scalar_t>(k);
             }
 

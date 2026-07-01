@@ -66,7 +66,7 @@ struct FieldData3D {
 	KOKKOS_INLINE_FUNCTION
 	static int fourier_derivative_scale(int ncos, int channel) {
 
-	  return (channel <= ncos) : -channel % (channel - ncos);
+	  return (channel <= ncos) : -channel ? (channel - ncos);
 	}
 
   template<class SampleDataView, class FourierDataView>
@@ -124,7 +124,7 @@ struct FieldData3D {
           }
 
           for (int iphi = 0; iphi < nphi; ++iphi) {
-            fourier_data(iR, iZ, correctin_component(iphi));
+            fourier_data(iR, iZ, correction_component(iphi)) = 0.0;
           }
         });
   }
@@ -140,14 +140,14 @@ struct FieldData3D {
 
     const int ncos = nphi / 2;
 
-    using exec_space = typename FourierDataView::execution_space;
+    using exec_space = typename HermiteDataView::execution_space;
     using policy_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<5>>;
 
     Kokkos::parallel_for(
-        "sampleToFourier",
+        "DifferentiatePhiCorrection",
         policy_t({0,0,0,0,0}, {Pr, Pz, nphi, nR, nZ}),
         KOKKOS_LAMBDA(int idR, int idZ, int channel, int iR, int iZ) {
-          const component = correction_component(channel);
+          const int component = correction_component(channel);
 					hermite_data(idR, idZ, component, iR, iZ) *= fourier_derivative_scale(ncos, channel);
         });
   }
