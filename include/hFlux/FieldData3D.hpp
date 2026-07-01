@@ -55,11 +55,6 @@ struct FieldData3D {
 
   KOKKOS_INLINE_FUNCTION
   static int fourier_component(int channel, int d) {
-    return ndims * channel + d;
-  }
-
-  KOKKOS_INLINE_FUNCTION
-  static int fourier_component_with_correction(int channel, int d) {
     return (ndims+1) * channel + d;
   }
 
@@ -67,6 +62,12 @@ struct FieldData3D {
   static int correction_component(int channel) {
     return (ndims+1) * channel + ndims;
   }
+
+	KOKKOS_INLINE_FUNCTION
+	static int fourier_derivative_scale(int ncos, int channel) {
+
+	  return (channel <= ncos) : -channel % (channel - ncos);
+	}
 
   template<class SampleDataView, class FourierDataView>
   void sampleToFourier(SampleDataView sample_data,
@@ -77,7 +78,7 @@ struct FieldData3D {
     KOKKOS_ASSERT(nR <= fourier_data.extent_int(0));
     KOKKOS_ASSERT(nZ <= fourier_data.extent_int(1));
     KOKKOS_ASSERT(sample_data.extent_int(2)  >= ndims * nphi);
-    KOKKOS_ASSERT(fourier_data.extent_int(2) >= ndims * nphi);
+    KOKKOS_ASSERT(fourier_data.extent_int(2) >= (ndims+1) * nphi);
 
     using exec_space = typename FourierDataView::execution_space;
     using policy_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
@@ -121,6 +122,33 @@ struct FieldData3D {
             fourier_data(iR, iZ, fourier_component(sin_offset + k - 1, d)) =
                 2.0 * inv_nphi * sin_sum;
           }
+
+          for (int iphi = 0; iphi < nphi; ++iphi) {
+            fourier_data(iR, iZ, correctin_component(iphi));
+          }
+        });
+  }
+
+
+  template<class HermiteDataView>
+  void DifferentiatePhiCorrection(HermiteDataView hermite_data) {
+
+    const int Pr = hermite_data.extent_int(0);
+    const int Pz = hermite_data.extent_int(1);
+    const int nR = hermite_data.extent_int(3);
+    const int nZ = hermite_data.extent_int(4);
+
+    const int ncos = nphi / 2;
+
+    using exec_space = typename FourierDataView::execution_space;
+    using policy_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<5>>;
+
+    Kokkos::parallel_for(
+        "sampleToFourier",
+        policy_t({0,0,0,0,0}, {Pr, Pz, nphi, nR, nZ}),
+        KOKKOS_LAMBDA(int idR, int idZ, int channel, int iR, int iZ) {
+          const component = correction_component(channel);
+					hermite_data(idR, idZ, component, iR, iZ) *= fourier_derivative_scale(ncos, channel);
         });
   }
 };
