@@ -7,7 +7,7 @@
 
 // Hermite coefficients layout for best point evaluation:
 // hermite_data(idR, idZ, packed_component, iR, iZ)
-// packed_component = ndims * fueier_channel + quantity
+// packed_component = (ndims+1) * fueier_channel + quantity
 // quantity 0: R B_R
 // quantity 1: R B_phi
 // quantity 2: R B_Z from 2D cleaning on each fouier channel
@@ -31,12 +31,11 @@ struct FieldData3D {
   PsiView psi_data;
 
   const int nphi;
-  const Real dphi;
 
   FieldData3D(int nR_data, int nZ_data, int nphi_data,
                       Real R0, Real Z0, Real dR, Real dZ, Real dphi)
       : fd_locator(R0, Z0, dR, dZ, nR_data - 1, nZ_data - 1),
-        nphi(nphi_data), dphi(dphi),
+        nphi(nphi_data), dphi(2.0 * M_PI / nphi),
         hermite_locator(makeHermiteLocator<swidth>(fd_locator)),
         data("data", nR_data, nZ_data, ndims * nphi_data),
         hermite_data("hermite_data",
