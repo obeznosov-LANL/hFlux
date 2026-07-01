@@ -20,9 +20,13 @@ struct FieldData3D {
   HermiteView hermite_data;
   PsiView psi_data;
 
-  FieldData3D(int nR_data, int nZ_data, int nPhi_data,
-                      Real R0, Real Z0, Real dR, Real dZ)
+  const int nphi;
+  const Real dphi;
+
+  FieldData3D(int nR_data, int nZ_data, int nphi_data,
+                      Real R0, Real Z0, Real dR, Real dZ, Real dphi)
       : fd_locator(R0, Z0, dR, dZ, nR_data - 1, nZ_data - 1),
+        nphi(nphi_data), dphi(dphi),
         hermite_locator(makeHermiteLocator<swidth>(fd_locator)),
         data("data", nR_data, nZ_data, ndims * nPhi_data),
         hermite_data("hermite_data",
