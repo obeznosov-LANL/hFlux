@@ -342,7 +342,9 @@ struct Interpolator {
   template<class HermiteView>
   void computeChi(const StructuredLocator& hermite_locator,
                    HermiteView hermite_data,
-                   int component0, int nfields, int component_stride) {
+                   int component0,
+                   int nfields,
+                   int component_stride) {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
 
@@ -373,12 +375,12 @@ struct Interpolator {
     const scalar_t minus_half = scalar_t(-0.5);
 
     using exec_space = typename HermiteView::execution_space;
-    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
     using policy1D_t = Kokkos::RangePolicy<exec_space>;
 
     // compute Z integral and store it in psi coefficients. Thats is psi := - int_Zc^Z RB_R(R,Z') dZ'
     Kokkos::parallel_for("computeChi", policy_t({0, 0, 0}, {nfields, nR, Pr}),
-      KOKKOS_LAMBDA(int ifield, const int iRcell, const int idR)
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
       {
         int base = component0 + ifield * component_stride;
         for (int iZcell = 0; iZcell < nZ; ++iZcell) {
@@ -679,7 +681,5 @@ struct Interpolator {
     computeFlux(hermite_locator, hermite_data, psi, b_component0);
   }
 };
-
-
 
 
