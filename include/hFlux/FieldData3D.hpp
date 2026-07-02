@@ -87,33 +87,36 @@ struct FieldData3D {
     const int sin_offset = 1 + ncos;
     const Real inv_nphi = 1.0 / static_cast<Real>(nphi);
 
+    const int nphi_d = nphi;
+    const Real dphi_d = dphi;
+
     Kokkos::parallel_for(
         "sampleToFourier",
         policy_t({0,0,0}, {nR, nZ, ndims}),
         KOKKOS_LAMBDA(int iR, int iZ, int d) {
           Real sum = 0.0;
-          for (int iphi = 0; iphi < nphi; ++iphi) {
+          for (int iphi = 0; iphi < nphi_d; ++iphi) {
             sum += sample_data(iR, iZ, sample_component(iphi, d));
           }
           fourier_data(iR, iZ, fourier_component(0, d)) = sum * inv_nphi;
 
           for (int k = 1; k <= ncos; ++k) {
             Real cos_sum = 0.0;
-            for (int iphi = 0; iphi < nphi; ++iphi) {
-              const Real phi = static_cast<Real>(iphi) * dphi;
+            for (int iphi = 0; iphi < nphi_d; ++iphi) {
+              const Real phi = static_cast<Real>(iphi) * dphi_d;
               cos_sum += sample_data(iR, iZ, sample_component(iphi, d)) *
                          Kokkos::cos(static_cast<Real>(k) * phi);
             }
 
-            const bool is_nyquist = (nphi % 2 == 0) && (k == ncos);
+            const bool is_nyquist = (nphi_d % 2 == 0) && (k == ncos);
             const Real scale = is_nyquist ? inv_nphi : 2.0 * inv_nphi;
             fourier_data(iR, iZ, fourier_component(k, d)) = scale * cos_sum;
           }
 
           for (int k = 1; k <= nsin; ++k) {
             Real sin_sum = 0.0;
-            for (int iphi = 0; iphi < nphi; ++iphi) {
-              const Real phi = static_cast<Real>(iphi) * dphi;
+            for (int iphi = 0; iphi < nphi_d; ++iphi) {
+              const Real phi = static_cast<Real>(iphi) * dphi_d;
               sin_sum += sample_data(iR, iZ, sample_component(iphi, d)) *
                          Kokkos::sin(static_cast<Real>(k) * phi);
             }
@@ -122,7 +125,7 @@ struct FieldData3D {
                 2.0 * inv_nphi * sin_sum;
           }
 
-          for (int iphi = 0; iphi < nphi; ++iphi) {
+          for (int iphi = 0; iphi < nphi_d; ++iphi) {
             fourier_data(iR, iZ, correction_component(iphi)) = 0.0;
           }
         });

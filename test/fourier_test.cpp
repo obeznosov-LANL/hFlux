@@ -5,20 +5,26 @@
 #include "hFlux/FieldData3D.hpp"
 #include "hFlux/FourierEvaluator.hpp"
 #include "hFlux/Interpolator.hpp"
+#include "AnalyticField.hpp"
 
 namespace {
 
 KOKKOS_INLINE_FUNCTION
 void eval_non_axisymmetric_field(Dim3& B, const Real R, const Real Z,
-                                 const Real phi) {
-  const Real r = R - 2.5;
-  const Real z = Z + 0.25;
-  const Real base = 1.0 + 0.1 * r + 0.03 * z * z;
-  const Real mode = 0.2 + 0.04 * r * z;
+                                 const Real phi, AnalyticField af) {
 
-  B[0] = (base + mode * Kokkos::cos(phi)) / R;
-  B[1] = (0.7 - 0.05 * r + (0.3 + 0.02 * z) * Kokkos::sin(2.0 * phi)) / R;
-  B[2] = (-0.4 + 0.06 * z + (0.15 + 0.01 * r * r) * Kokkos::sin(phi)) / R;
+  const int n = 6;
+  const int m = 3;
+
+  const Real qmn = static_cast<Real> (m) / static_cast<Real> (n);
+
+  r = Kokkos::sqrt( (R-3.) * (R-3.) + Z * Z );
+  Rr = exp(-(r - qmn) * (r - qmn))
+
+
+  af.eval(B, R, Z);
+
+
 }
 
 void run(const int nR_data, const int nZ_data, Real& hR,
@@ -42,9 +48,14 @@ void run(const int nR_data, const int nZ_data, Real& hR,
 
   FieldData3D<m, swidth, exec_space> data(nR_data, nZ_data, nphi,
                                            R0, Z0, dR, dZ, dphi);
-  Kokkos::View<Real***, Kokkos::LayoutRight, exec_space> fourier_data(
+  Kokkos::DualView<Real***, Kokkos::LayoutRight, exec_space> fourier_data(
       "fourier_data", nR_data, nZ_data, (3 + 1) * nphi);
 
+  Real q0 = 2.1;
+  Real q2 = 2.0;
+  Real R_a = 3.0;
+  Real E_0 = 70.0;
+  AnalyticField af(q0, q2, R_a, E_0);
   auto sample_data = data.data;
   Kokkos::parallel_for(
       "set_non_axisymmetric_field",
@@ -55,7 +66,7 @@ void run(const int nR_data, const int nZ_data, Real& hR,
         const Real phi = dphi * static_cast<Real>(iphi);
 
         Dim3 B = {};
-        eval_non_axisymmetric_field(B, R, Z, phi);
+        eval_non_axisymmetric_field(B, R, Z, phi, af);
         for (int d = 0; d < 3; ++d) {
           sample_data.view_device()(i, j, FieldData3D<m, swidth, exec_space>::sample_component(iphi, d)) =
               R * B[d];
@@ -63,15 +74,14 @@ void run(const int nR_data, const int nZ_data, Real& hR,
       });
   sample_data.modify_device();
 
-  data.sampleToFourier(data.data.view_device(), fourier_data);
+  data.sampleToFourier(data.data.view_device(), fourier_data.view_device());
+  fourier_data.modify_device();
 
   Interpolator<m, swidth> itrp;
-  for (int channel = 0; channel < nphi; ++channel) {
-    itrp.interpolateRange<3>(
-        data.fd_locator, data.hermite_locator, fourier_data,
-        data.hermite_data.view_device(),
-        FieldData3D<m, swidth, exec_space>::fourier_component(channel, 0));
-  }
+  itrp.interpolate(
+      data.fd_locator, data.hermite_locator,
+      fourier_data.view_device(),
+      data.hermite_data.view_device());
   data.hermite_data.modify_device();
 
   l2err = {};
@@ -100,7 +110,7 @@ void run(const int nR_data, const int nZ_data, Real& hR,
 
         Dim3 RB = {}, B_exact = {};
         ev.evalField(RB, R, Z, phi, data.hermite_data.view_device());
-        eval_non_axisymmetric_field(B_exact, R, Z, phi);
+        eval_non_axisymmetric_field(B_exact, R, Z, phi, af);
 
         const Real diff0 = B_exact[0] - RB[0] / R;
         const Real diff1 = B_exact[1] - RB[1] / R;
