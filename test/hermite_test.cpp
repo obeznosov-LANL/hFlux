@@ -49,24 +49,26 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
     for (int di = 0; di < sbv.extent(0); ++di)
       sbv(di) = B[di] * R;
   });
+  data.data.modify_device();  // Mark grid data as modfied
 
+  data.data.sync_device();  // Fetch grid data
   Interpolator<m, swidth> itrp;
   itrp.interpolate(data.fd_locator,
       data.hermite_locator,
       data.data.view_device(),
       data.hermite_data.view_device());
-
   data.hermite_data.modify_device();  // Mark hermite data as modified
 
+
+  data.hermite_data.sync_device();  //  Fetch hermite data if modified
   itrp.computeFlux(data.hermite_locator,
       data.hermite_data.view_device(),
       data.psi_data.view_device());
-
   data.psi_data.modify_device();  // Mark psi data as modified
 
+  data.hermite_data.sync_device();  // Fetch hermite data if modified
   itrp.cleanDivergence(data.hermite_locator,
       data.hermite_data.view_device());
-
   data.hermite_data.modify_device();  // Hermite data was modified again
 
 
@@ -80,7 +82,6 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
 
   data.hermite_data.sync_host();
   data.psi_data.sync_host();
-
   findMagneticAxis(R_center, Z_center,
               data.hermite_data.view_host(),
               data.psi_data.view_host(),
@@ -90,6 +91,7 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
 
   std::cout << std::format("Psi_min = {:.17g}", Psi_min) << std::endl;
 
+  data.psi_data.sync_device();
   Kokkos::parallel_for("Normalize psi",
   policy2D({0,0}, {nR,nZ}),
   KOKKOS_LAMBDA(int i, int j){
@@ -112,6 +114,9 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   Kokkos::View<Real***, Kokkos::LayoutRight, exec_space> view_B("plot_B", nR_pl, nZ_pl, 3);
   Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi("plot_psi", nR_pl, nZ_pl);
   Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi_exact("plot_psi_exact", nR_pl, nZ_pl);
+
+  data.hermite_data.sync_device();
+  data.psi_data.sync_device();
 
   Kokkos::parallel_reduce("eval",
   policy2D({0,0}, {nR_pl,nZ_pl}),

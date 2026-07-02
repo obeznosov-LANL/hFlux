@@ -8,6 +8,8 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   static const int m = 2;
   static const int swidth = 7;
 
+  const int nphi_data = 20;
+
   using exec_space = Kokkos::DefaultExecutionSpace;
 
   Real R0 = 1.525;
@@ -21,7 +23,7 @@ void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
   dR = (R1 - R0) / (nR_data-1);
   dZ = (Z1 - Z0) / (nZ_data-1);
 
-  FieldData<m, swidth, exec_space> data(nR_data, nZ_data, R0, Z0, dR, dZ);
+  FieldData<m, swidth, exec_space> data(nR_data, nZ_data, nphi_data, R0, Z0, dR, dZ);
 
   Real q0 = 2.1;
   Real q2 = 2.0;

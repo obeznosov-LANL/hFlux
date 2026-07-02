@@ -210,7 +210,7 @@ struct Interpolator {
     const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
 
     compute_derivatives_grid<m, swidth>(data, hermite_data, scaleR, scaleZ);
-    interpolate_grid<m>(hh);
+    interpolate_grid<m>(hermite_data);
   }
 
 
@@ -342,7 +342,7 @@ struct Interpolator {
   template<class HermiteView>
   void computeChi(const StructuredLocator& hermite_locator,
                    HermiteView hermite_data,
-                   int component0 = 0, int nfields, int component_stride) {
+                   int component0, int nfields, int component_stride) {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
 
@@ -378,7 +378,7 @@ struct Interpolator {
 
     // compute Z integral and store it in psi coefficients. Thats is psi := - int_Zc^Z RB_R(R,Z') dZ'
     Kokkos::parallel_for("computeChi", policy_t({0, 0, 0}, {nfields, nR, Pr}),
-      KOKKOS_LAMBDA(const int iRcell, const int idR)
+      KOKKOS_LAMBDA(int ifield, const int iRcell, const int idR)
       {
         int base = component0 + ifield * component_stride;
         for (int iZcell = 0; iZcell < nZ; ++iZcell) {
@@ -510,7 +510,7 @@ struct Interpolator {
           for (int idZ = 1; idZ < PpsiZ; ++idZ) {
             scalar_t val = scalar_t(0);
             if (idR < Pr && (idZ - 1) < Pz) {
-              val = -hZ_s * hermite_data(idR, idZ - 1, base + 2, iRcell, iZcell) /
+              val = -hZ_s * hermite_data(idR, idZ - 1, base, iRcell, iZcell) /
                     static_cast<scalar_t>(idZ);
             }
 
@@ -579,6 +579,8 @@ struct Interpolator {
     Kokkos::parallel_for("computeFlux_R", policy1D_t(0, nZ),
       KOKKOS_LAMBDA(const int iZcell)
       {
+        int ifield = 0, component_stride = 3;
+        int base = component0 + ifield * component_stride;
         for (int iRcell = 0; iRcell < nR; ++iRcell) {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t z_anchor_coeff = scalar_t(0);
