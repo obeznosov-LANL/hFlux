@@ -1,213 +1,156 @@
 #include <cmath>
+#include <format>
 #include <iostream>
 
-#include "AnalyticField.hpp"
-#include "hFlux/hFlux.hpp"
+#include "hFlux/FieldData3D.hpp"
+#include "hFlux/FourierEvaluator.hpp"
+#include "hFlux/Interpolator.hpp"
 
-void run(int nR_data, int nZ_data, Real& hR, Kokkos::Array<Real, 4>& l2err) {
-  static const int m = 2;
-  static const int swidth = 7;
+namespace {
+
+KOKKOS_INLINE_FUNCTION
+void eval_non_axisymmetric_field(Dim3& B, const Real R, const Real Z,
+                                 const Real phi) {
+  const Real r = R - 2.5;
+  const Real z = Z + 0.25;
+  const Real base = 1.0 + 0.1 * r + 0.03 * z * z;
+  const Real mode = 0.2 + 0.04 * r * z;
+
+  B[0] = (base + mode * Kokkos::cos(phi)) / R;
+  B[1] = (0.7 - 0.05 * r + (0.3 + 0.02 * z) * Kokkos::sin(2.0 * phi)) / R;
+  B[2] = (-0.4 + 0.06 * z + (0.15 + 0.01 * r * r) * Kokkos::sin(phi)) / R;
+}
+
+void run(const int nR_data, const int nZ_data, Real& hR,
+         Kokkos::Array<Real, 3>& l2err) {
+  static constexpr int m = 2;
+  static constexpr int swidth = 7;
+  static constexpr int nphi = 8;
 
   using exec_space = Kokkos::DefaultExecutionSpace;
+  using policy3D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
 
-  Real R0 = 1.525;
-  Real Z0 = -2.975;
-  Real dR = 0.0345;
-  Real dZ = 0.02975;
+  const Real R0 = 1.525;
+  const Real Z0 = -2.975;
+  const Real R1 = R0 + 99.0 * 0.0345;
+  const Real Z1 = Z0 + 199.0 * 0.02975;
+  const Real dR = (R1 - R0) / static_cast<Real>(nR_data - 1);
+  const Real dZ = (Z1 - Z0) / static_cast<Real>(nZ_data - 1);
+  const Real dphi = 2.0 * M_PI / static_cast<Real>(nphi);
 
-  Real R1 = R0 + 99 * dR;
-  Real Z1 = Z0 + 199 * dZ;
+  FieldData3D<m, swidth, exec_space> data(nR_data, nZ_data, nphi,
+                                           R0, Z0, dR, dZ, dphi);
+  Kokkos::View<Real***, Kokkos::LayoutRight, exec_space> fourier_data(
+      "fourier_data", nR_data, nZ_data, (3 + 1) * nphi);
 
-  dR = (R1 - R0) / (nR_data-1);
-  dZ = (Z1 - Z0) / (nZ_data-1);
+  auto sample_data = data.data;
+  Kokkos::parallel_for(
+      "set_non_axisymmetric_field",
+      policy3D({0, 0, 0}, {nR_data, nZ_data, nphi}),
+      KOKKOS_LAMBDA(const int i, const int j, const int iphi) {
+        const Real R = R0 + dR * static_cast<Real>(i);
+        const Real Z = Z0 + dZ * static_cast<Real>(j);
+        const Real phi = dphi * static_cast<Real>(iphi);
 
-  FieldData<m, swidth, exec_space> data(nR_data, nZ_data, R0, Z0, dR, dZ);
+        Dim3 B = {};
+        eval_non_axisymmetric_field(B, R, Z, phi);
+        for (int d = 0; d < 3; ++d) {
+          sample_data.view_device()(i, j, FieldData3D<m, swidth, exec_space>::sample_component(iphi, d)) =
+              R * B[d];
+        }
+      });
+  sample_data.modify_device();
 
-  Real q0 = 2.1;
-  Real q2 = 2.0;
-  Real R_a = 3.0;
-  Real E_0 = 70.0;
-
-  AnalyticField af(q0, q2, R_a, E_0);
-
-  auto field_data = data.data;
-  auto hermite_data = data.hermite_data;
-
-  int nR = hermite_data.extent_int(3);
-  int nZ = hermite_data.extent_int(4);
-
-  using policy2D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
-  Kokkos::parallel_for("setfields",
-  policy2D({0,0}, {nR_data,nZ_data}),
-  KOKKOS_LAMBDA(int i, int j){
-    // linearize: row-major numbering
-    auto sbv = Kokkos::subview(field_data.view_device(), i, j, Kokkos::ALL);
-
-    Real R = R0 + dR * i, Z = Z0 + dZ * j;
-    Dim3 B = {};
-    af.eval(B, R, Z);
-    for (int di = 0; di < sbv.extent(0); ++di)
-      sbv(di) = B[di] * R;
-  });
+  data.sampleToFourier(data.data.view_device(), fourier_data);
 
   Interpolator<m, swidth> itrp;
-  itrp.interpolate(data.fd_locator,
-      data.hermite_locator,
-      data.data.view_device(),
-      data.hermite_data.view_device());
-
-  data.hermite_data.modify_device();  // Mark hermite data as modified
-
-  itrp.computeFlux(data.hermite_locator,
-      data.hermite_data.view_device(),
-      data.psi_data.view_device());
-
-  data.psi_data.modify_device();  // Mark psi data as modified
-
-  itrp.cleanDivergence(data.hermite_locator,
-      data.hermite_data.view_device());
-
-  data.hermite_data.modify_device();  // Hermite data was modified again
-
-
-  // Find MA center
-  Real R_center = 3.2;
-  Real Z_center = -0.7;
-  int descent = -1;
-  Real Psi_min;
-
-  Evaluator ev{data.hermite_locator};
-
-  data.hermite_data.sync_host();
-  data.psi_data.sync_host();
-
-  findMagneticAxis(R_center, Z_center,
-              data.hermite_data.view_host(),
-              data.psi_data.view_host(),
-              ev,
-              descent,
-              Psi_min);
-
-  std::cout << std::format("Psi_min = {:.17g}", Psi_min) << std::endl;
-
-  Kokkos::parallel_for("Normalize psi",
-  policy2D({0,0}, {nR,nZ}),
-  KOKKOS_LAMBDA(int i, int j){
-    data.psi_data.view_device()(0,0,i,j) -= Psi_min;
-  });
-  data.psi_data.modify_device();
+  for (int channel = 0; channel < nphi; ++channel) {
+    itrp.interpolateRange<3>(
+        data.fd_locator, data.hermite_locator, fourier_data,
+        data.hermite_data.view_device(),
+        FieldData3D<m, swidth, exec_space>::fourier_component(channel, 0));
+  }
+  data.hermite_data.modify_device();
 
   l2err = {};
 
-  int nR_pl = 400;
-  int nZ_pl = 800;
-  Real eps = 1e-8;
-  Real R0_pl = data.hermite_locator.R0 + eps;
-  Real Z0_pl = data.hermite_locator.Z0 + eps;
-  Real R1_pl = data.hermite_locator.R1 - eps;
-  Real Z1_pl = data.hermite_locator.Z1 - eps;
-  Real dR_pl = (R1_pl - R0_pl) / (nR_pl-1);
-  Real dZ_pl = (Z1_pl - Z0_pl) / (nZ_pl-1);
+  const int nR_pl = 160;
+  const int nZ_pl = 320;
+  const int nphi_pl = 7;
+  const Real eps = 1e-8;
+  const Real R0_pl = data.hermite_locator.R0 + eps;
+  const Real Z0_pl = data.hermite_locator.Z0 + eps;
+  const Real R1_pl = data.hermite_locator.R1 - eps;
+  const Real Z1_pl = data.hermite_locator.Z1 - eps;
+  const Real dR_pl = (R1_pl - R0_pl) / static_cast<Real>(nR_pl - 1);
+  const Real dZ_pl = (Z1_pl - Z0_pl) / static_cast<Real>(nZ_pl - 1);
+  const Real dphi_pl = 2.0 * M_PI / static_cast<Real>(nphi_pl);
 
-  Kokkos::View<Real***, Kokkos::LayoutRight, exec_space> view_B("plot_B", nR_pl, nZ_pl, 3);
-  Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi("plot_psi", nR_pl, nZ_pl);
-  Kokkos::View<Real**, Kokkos::LayoutRight, exec_space> view_psi_exact("plot_psi_exact", nR_pl, nZ_pl);
+  FourierEvaluator ev{data.hermite_locator};
+  Kokkos::parallel_reduce(
+      "eval_non_axisymmetric_field",
+      policy3D({0, 0, 0}, {nR_pl, nZ_pl, nphi_pl}),
+      KOKKOS_LAMBDA(const int i, const int j, const int iphi, Real& err0,
+                    Real& err1, Real& err2) {
+        const Real R = R0_pl + dR_pl * static_cast<Real>(i);
+        const Real Z = Z0_pl + dZ_pl * static_cast<Real>(j);
+        const Real phi = (static_cast<Real>(iphi) + 0.37) * dphi_pl;
 
-  Kokkos::parallel_reduce("eval",
-  policy2D({0,0}, {nR_pl,nZ_pl}),
-  KOKKOS_LAMBDA(int i, int j, Real& err0, Real& err1, Real& err2, Real& err_psi){
-    Real R = R0_pl + dR_pl * i, Z = Z0_pl + dZ_pl * j;
+        Dim3 RB = {}, B_exact = {};
+        ev.evalField(RB, R, Z, phi, data.hermite_data.view_device());
+        eval_non_axisymmetric_field(B_exact, R, Z, phi);
 
-    Dim3 B = {}, B_exact = {};
-    Real Psi = 0., Psi_exact = 0.;
+        const Real diff0 = B_exact[0] - RB[0] / R;
+        const Real diff1 = B_exact[1] - RB[1] / R;
+        const Real diff2 = B_exact[2] - RB[2] / R;
+        err0 += diff0 * diff0;
+        err1 += diff1 * diff1;
+        err2 += diff2 * diff2;
+      },
+      l2err[0], l2err[1], l2err[2]);
 
-    ev.evalField(B, R, Z, data.hermite_data.view_device());
-    ev.evalPsi(Psi, R, Z, data.psi_data.view_device());
-
-    af.eval(B_exact, R, Z);
-    Psi_exact = af.Psi(R, Z);
-
-    for (int d = 0; d < 3; ++d) {
-      view_B(i, j, d) = B[d];
-    }
-    view_psi(i, j) = Psi;
-
-    view_psi_exact(i, j) = Psi_exact;
-
-    err0 += pow(B_exact[0] - B[0] / R, 2);
-    err1 += pow(B_exact[1] - B[1] / R, 2);
-    err2 += pow(B_exact[2] - B[2] / R, 2);
-
-    err_psi += pow(Psi_exact - Psi, 2);
-  }, l2err[0], l2err[1], l2err[2], l2err[3]);
-
-//  auto psi_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_psi);
-//  auto psi_exact_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_psi_exact);
-//  auto B_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},view_B);
-//
-//  std::cout << "<<<<" << std::endl;
-//  for (int i = 0; i < nR_pl; ++i) {
-//    for (int j = 0; j < nZ_pl; ++j) {
-//      Real R = R0_pl + dR_pl * i, Z = Z0_pl + dZ_pl * j;
-//      std::cout << std::format("{:.17g} {:.17g} {:.17g} {:.17g} {:.17g} {:.17g} {:.17g} ",
-//          R, Z,
-//          B_host(i,j,0),
-//          B_host(i,j,1),
-//          B_host(i,j,2),
-//          psi_host(i,j),
-//          psi_exact_host(i,j));
-//    }
-//    std::cout << std::endl;
-//  }
-//  std::cout << ">>>>" << std::endl;
-
-  for (int i = 0; i < l2err.size(); ++i)
-    l2err[i] = sqrt(l2err[i] * dR_pl * dZ_pl);
+  const Real volume = dR_pl * dZ_pl * dphi_pl;
+  for (int i = 0; i < l2err.size(); ++i) {
+    l2err[i] = std::sqrt(l2err[i] * volume);
+  }
   hR = data.hermite_locator.dR;
 }
 
+}  // namespace
 
 int main() {
   Kokkos::initialize();
-  int NR = 100;
-  Kokkos::Array<Real, 4> l2err;
-  Real hR;
-  Real order = (2*2+2);
-  for (int ix = 0; ix < 5; ++ix) {
-    Real hR_new;
-    Kokkos::Array<Real, 4> l2err_new;
 
-    run(NR, 2*NR, hR_new, l2err_new);
+  int NR = 64;
+  Kokkos::Array<Real, 3> l2err = {};
+  Real hR = 0.0;
+  constexpr Real expected_order = 2 * 2 + 2;
+
+  for (int ix = 0; ix < 4; ++ix) {
+    Real hR_new = 0.0;
+    Kokkos::Array<Real, 3> l2err_new = {};
+
+    run(NR, 2 * NR, hR_new, l2err_new);
     if (ix > 0) {
-      Real o1 = log(l2err[0] / l2err_new[0]) / log(hR / hR_new);
-      Real o2 = log(l2err[2] / l2err_new[2]) / log(hR / hR_new);
-      Real o3 = log(l2err[3] / l2err_new[3]) / log(hR / hR_new);
-      std::cout << std::format("{:.17g} {:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2], l2err[3]);
-      std::cout << std::format("{:.17g} {:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2], l2err_new[3]);
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2]);
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2]);
 
-      if ((int)round(o1) < order && l2err_new[3] > 1e-12) {
-        std::fprintf(stderr, "B_R interpolation did not converge with order %f %le\n", order, o1);
-        Kokkos::finalize();
-        return 1;
-      }
-      if ((int)round(o2) < order - 1 && l2err_new[3] > 1e-12) {
-        std::fprintf(stderr, "B_Z interpolation did not converge with order %f %le\n", order - 1, o2);
-        Kokkos::finalize();
-        return 2;
-      }
-      if ((int)round(o3) < order && l2err_new[3] > 1e-10) {
-        std::fprintf(stderr, "Psi did not converge with order %f %le %le\n", order, o3, hR/hR_new);
-        Kokkos::finalize();
-        return 2;
+      for (int d = 0; d < 3; ++d) {
+        const Real order = std::log(l2err[d] / l2err_new[d]) / std::log(hR / hR_new);
+        if (static_cast<int>(std::round(order)) < expected_order && l2err_new[d] > 1e-12) {
+          std::fprintf(stderr, "B_%d interpolation did not converge with order %f %le\n",
+                       d, expected_order, order);
+          Kokkos::finalize();
+          return d + 1;
+        }
       }
     }
 
     l2err = l2err_new;
     hR = hR_new;
-
-    NR *= 1.5;
+    NR = static_cast<int>(1.5 * NR);
   }
+
   Kokkos::finalize();
   return 0;
 }
-

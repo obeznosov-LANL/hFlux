@@ -170,7 +170,7 @@ void evalTaylorFourier4(Dim3& vals, Real& correction, Real x, Real y, Real phi, 
     Real mon = sclx;
     for (int j = 0; j < Py; ++j) {
       for (int d = 0; d < 3; ++d) {
-         vals[d] += mon * pcofs(i, j, channel * channel_stride  + d);
+         vals[d] += mon * pcofs(i, j, d);
        }
        mon *= y;
     }

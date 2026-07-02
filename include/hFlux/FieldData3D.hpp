@@ -65,8 +65,7 @@ struct FieldData3D {
 
 	KOKKOS_INLINE_FUNCTION
 	static int fourier_derivative_scale(int ncos, int channel) {
-
-	  return (channel <= ncos) : -channel ? (channel - ncos);
+	  return (channel <= ncos) ? -channel : (channel - ncos);
 	}
 
   template<class SampleDataView, class FourierDataView>
