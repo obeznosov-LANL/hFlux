@@ -9,23 +9,6 @@
 
 namespace {
 
-KOKKOS_INLINE_FUNCTION
-void eval_non_axisymmetric_field(Dim3& B, const Real R, const Real Z,
-                                 const Real phi, AnalyticField af) {
-
-  const int n = 6;
-  const int m = 3;
-
-  const Real qmn = static_cast<Real> (m) / static_cast<Real> (n);
-
-  r = Kokkos::sqrt( (R-3.) * (R-3.) + Z * Z );
-  Rr = exp(-(r - qmn) * (r - qmn))
-
-
-  af.eval(B, R, Z);
-
-
-}
 
 void run(const int nR_data, const int nZ_data, Real& hR,
          Kokkos::Array<Real, 3>& l2err) {
@@ -55,6 +38,8 @@ void run(const int nR_data, const int nZ_data, Real& hR,
   Real q2 = 2.0;
   Real R_a = 3.0;
   Real E_0 = 70.0;
+
+
   AnalyticField af(q0, q2, R_a, E_0);
   auto sample_data = data.data;
   Kokkos::parallel_for(
@@ -66,7 +51,7 @@ void run(const int nR_data, const int nZ_data, Real& hR,
         const Real phi = dphi * static_cast<Real>(iphi);
 
         Dim3 B = {};
-        eval_non_axisymmetric_field(B, R, Z, phi, af);
+        af.eval(B, R, Z, phi);
         for (int d = 0; d < 3; ++d) {
           sample_data.view_device()(i, j, FieldData3D<m, swidth, exec_space>::sample_component(iphi, d)) =
               R * B[d];
