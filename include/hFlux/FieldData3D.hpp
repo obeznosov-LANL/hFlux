@@ -64,7 +64,20 @@ struct FieldData3D {
   }
 
 	KOKKOS_INLINE_FUNCTION
-	static int fourier_derivative_scale(int ncos, int channel) {
+	static int fourier_derivative_scale(int nphi_in, int ncos, int channel) {
+	  // Spectral d/dphi of the real Fourier series stored as:
+	  //   channel 0        : DC
+	  //   channels 1..ncos : cosine coefficients a_1..a_{ncos}
+	  //   channels ncos+1..: sine coefficients b_1..
+	  // d/dphi maps cos(k phi) -> -k sin(k phi) and sin(k phi) -> +k cos(k phi),
+	  // which evalTaylorFourier4 realizes via a cos<->sin swap at evaluation.
+	  // For even nphi the top cosine channel (k == ncos) is the Nyquist mode;
+	  // its derivative (a sine at the Nyquist frequency) vanishes identically on
+	  // the phi sample grid, so it must be zeroed to avoid a spurious/aliased term.
+	  const bool is_nyquist = (nphi_in % 2 == 0) && (channel == ncos);
+	  if (is_nyquist) {
+	    return 0;
+	  }
 	  return (channel <= ncos) ? -channel : (channel - ncos);
 	}
 
@@ -145,12 +158,14 @@ struct FieldData3D {
     using exec_space = typename HermiteDataView::execution_space;
     using policy_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<5>>;
 
+    const int nphi_d = nphi;
+
     Kokkos::parallel_for(
         "DifferentiatePhiCorrection",
         policy_t({0,0,0,0,0}, {Pr, Pz, nphi, nR, nZ}),
         KOKKOS_LAMBDA(int idR, int idZ, int channel, int iR, int iZ) {
           const int component = correction_component(channel);
-					hermite_data(idR, idZ, component, iR, iZ) *= fourier_derivative_scale(ncos, channel);
+					hermite_data(idR, idZ, component, iR, iZ) *= fourier_derivative_scale(nphi_d, ncos, channel);
         });
   }
 };
