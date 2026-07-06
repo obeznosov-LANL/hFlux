@@ -273,8 +273,15 @@ struct Interpolator {
       KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
       {
         int base = component0 + ifield * component_stride;
-        // Anchor: preserve the existing constant coefficient at the center plane
-        const scalar_t a0_center = hermite_data(idR, 0, base + 2, iRcell, iZ0);
+        // Anchor: preserve the sampled RB_Z at the center plane, offset by the
+        // phi-correction there. evalField reconstructs F[2] = RB_Z_clean -
+        // correction, so anchoring on (sampled + correction(Z_c)) makes the
+        // reconstruction reproduce the true sampled RB_Z at Z_c. Requires the
+        // correction channel (base + 3) to be populated beforehand
+        // (computeChi + DifferentiatePhiCorrection).
+        const scalar_t a0_center =
+            hermite_data(idR, 0, base + 2, iRcell, iZ0) +
+            hermite_data(idR, 0, base + 3, iRcell, iZ0);
 
         // --- (1) Fill non-constant Z coefficients from RBR (and init a0 everywhere to anchor)
         // RBZ(idR,k) = - RBR(idR+1,k-1) * (hZ/hR) * (idR+1)/k   for k>=1
