@@ -391,7 +391,7 @@ struct Interpolator {
           for (int idZ = 1; idZ < Pz; ++idZ) {
             scalar_t val = scalar_t(0);
             if (idR < Pr && (idZ - 1) < Pz) {
-              val = -hZ_s * hermite_data(idR, idZ - 1, base + 1, iRcell, iZcell) /
+              val = hZ_s * hermite_data(idR, idZ - 1, base + 1, iRcell, iZcell) /
                     static_cast<scalar_t>(idZ);
             }
 
