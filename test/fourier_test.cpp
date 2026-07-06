@@ -14,9 +14,7 @@ void run(const int nR_data, const int nZ_data, Real& hR,
          Kokkos::Array<Real, 3>& l2err, Real& div_l2) {
   static constexpr int m = 2;
   static constexpr int swidth = 7;
-  static constexpr int nphi = 8;
-
-  const int nphi_data = 20;
+  static constexpr int nphi = 9;
 
   using exec_space = Kokkos::DefaultExecutionSpace;
   using policy3D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
@@ -133,9 +131,9 @@ void run(const int nR_data, const int nZ_data, Real& hR,
   //   div B = (1/R) [ d/dR q0 + (1/R) d/dphi q1 + d/dZ q2 ].
   // Central differences on the reconstructed (divergence-cleaned) field; the
   // L2 norm over interior sample points should converge to zero.
-  const Real hR_fd = 0.5 * dR_pl;
-  const Real hZ_fd = 0.5 * dZ_pl;
-  const Real hphi_fd = 0.25 * dphi_pl;
+  const Real hR_fd = 0.005 * dR_pl;
+  const Real hZ_fd = 0.005 * dZ_pl;
+  const Real hphi_fd = 0.0025 * dphi_pl;
 
   div_l2 = 0.0;
   Kokkos::parallel_reduce(
