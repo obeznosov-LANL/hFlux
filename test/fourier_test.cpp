@@ -38,9 +38,9 @@ void run(const int nR_data, const int nZ_data, Real& hR,
   Real q2 = 2.0;
   Real R_a = 3.0;
   Real E_0 = 70.0;
+  Real perturb_amp = 0.05;
 
-
-  AnalyticField af(q0, q2, R_a, E_0);
+  AnalyticField af(q0, q2, R_a, E_0, perturb_amp);
   auto sample_data = data.data;
   Kokkos::parallel_for(
       "set_non_axisymmetric_field",
@@ -95,7 +95,7 @@ void run(const int nR_data, const int nZ_data, Real& hR,
 
         Dim3 RB = {}, B_exact = {};
         ev.evalField(RB, R, Z, phi, data.hermite_data.view_device());
-        eval_non_axisymmetric_field(B_exact, R, Z, phi, af);
+        af.eval(B_exact, R, Z, phi);
 
         const Real diff0 = B_exact[0] - RB[0] / R;
         const Real diff1 = B_exact[1] - RB[1] / R;
