@@ -69,6 +69,21 @@ void run(const int nR_data, const int nZ_data, Real& hR,
       data.hermite_data.view_device());
   data.hermite_data.modify_device();
 
+  // Make each Fourier channel divergence free.
+  // Layout is stride-4 per channel: quantities 0=R B_R, 1=R B_phi,
+  // 2=R B_Z, 3=phi-correction. nphi channels total.
+  constexpr int component_stride = 4;
+  itrp.cleanDivergence(data.hermite_locator,
+      data.hermite_data.view_device(),
+      /*component0=*/0, /*nfields=*/nphi, component_stride);
+
+  itrp.computeChi(data.hermite_locator,
+      data.hermite_data.view_device(),
+      /*component0=*/0, /*nfields=*/nphi, component_stride);
+
+  data.DifferentiatePhiCorrection(data.hermite_data.view_device());
+  data.hermite_data.modify_device();
+
   l2err = {};
 
   const int nR_pl = 160;
