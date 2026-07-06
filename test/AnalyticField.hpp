@@ -52,38 +52,33 @@ struct AnalyticField {
   void perturbation_derivatives(Real& psi, Real& dpsi_dR, Real& dpsi_dZ,
                                 Real& dpsi_dphi, const Real R,
                                 const Real Z, const Real phi) const {
+    // Smooth (C-infinity), phi-periodic perturbation streamfunction:
+    //   psi = exp(-(x^2 + z^2) / (2 sigma^2)) * sin(n phi)
+    // with x = R - R_a, z = Z. Unlike a polar-angle form, this has no
+    // singularity at the magnetic axis (r = 0), so Hermite/Fourier
+    // interpolation retains its full convergence order.
     const Real x = R - R_a;
     const Real z = Z;
-    const Real r2 = x * x + z * z;
 
     psi = 0.0;
     dpsi_dR = 0.0;
     dpsi_dZ = 0.0;
     dpsi_dphi = 0.0;
 
-    if (r2 == 0.0 || perturb_n == 0) {
+    if (perturb_n == 0) {
       return;
     }
 
-    const Real r = Kokkos::sqrt(r2);
-    const Real theta = Kokkos::atan2(z, x);
-    const Real q_mn = static_cast<Real>(perturb_m) / static_cast<Real>(perturb_n);
-    const Real alpha = static_cast<Real>(perturb_n) * phi -
-                       static_cast<Real>(perturb_m) * theta;
-    const Real f = Kokkos::exp(-(r - q_mn) * (r - q_mn));
-    const Real df_dr = -2.0 * (r - q_mn) * f;
-    const Real sin_alpha = Kokkos::sin(alpha);
-    const Real cos_alpha = Kokkos::cos(alpha);
+    const Real sigma = 0.5;
+    const Real inv_sigma2 = 1.0 / (sigma * sigma);
+    const Real envelope = Kokkos::exp(-0.5 * (x * x + z * z) * inv_sigma2);
+    const Real sin_nphi = Kokkos::sin(static_cast<Real>(perturb_n) * phi);
+    const Real cos_nphi = Kokkos::cos(static_cast<Real>(perturb_n) * phi);
 
-    const Real dr_dR = x / r;
-    const Real dr_dZ = z / r;
-    const Real dalpha_dR = static_cast<Real>(perturb_m) * z / r2;
-    const Real dalpha_dZ = -static_cast<Real>(perturb_m) * x / r2;
-
-    psi = f * sin_alpha;
-    dpsi_dR = df_dr * dr_dR * sin_alpha + f * cos_alpha * dalpha_dR;
-    dpsi_dZ = df_dr * dr_dZ * sin_alpha + f * cos_alpha * dalpha_dZ;
-    dpsi_dphi = static_cast<Real>(perturb_n) * f * cos_alpha;
+    psi = envelope * sin_nphi;
+    dpsi_dR = -x * inv_sigma2 * envelope * sin_nphi;
+    dpsi_dZ = -z * inv_sigma2 * envelope * sin_nphi;
+    dpsi_dphi = static_cast<Real>(perturb_n) * envelope * cos_nphi;
   }
 
   KOKKOS_INLINE_FUNCTION
