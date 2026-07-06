@@ -399,7 +399,12 @@ struct Interpolator {
           }
         }
 
-        // Anchor Zc is the lower edge of the central Z cell.
+        // Anchor at the center of the central Z cell (Delta z = 0) so that
+        // chi (and hence the phi-correction d/dphi chi) vanishes at exactly the
+        // point where cleanDivergence anchors the constant RB_Z coefficient
+        // (hermite_data(idR, 0, base + 2, iRcell, iZ0)). This keeps the
+        // reconstructed RB_Z = RB_Z_clean - correction consistent with the
+        // sampled value at the anchor, avoiding a constant per-channel offset.
         scalar_t sum_plus = scalar_t(0);
         scalar_t sum_minus = scalar_t(0);
         scalar_t p_plus = half;
@@ -412,9 +417,11 @@ struct Interpolator {
           p_minus *= minus_half;
         }
 
-        scalar_t a0 = -sum_minus;
+        scalar_t a0 = scalar_t(0);
         hermite_data(idR, 0, base + 3, iRcell, iZ0) = a0;
         scalar_t boundary = a0 + sum_plus;
+        // Bottom edge of the central cell, used to seed the downward sweep.
+        const scalar_t central_bottom = a0 + sum_minus;
 
         for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
           sum_plus = scalar_t(0);
@@ -434,7 +441,7 @@ struct Interpolator {
           boundary = a0 + sum_plus;
         }
 
-        boundary = scalar_t(0);
+        boundary = central_bottom;
         for (int iZcell = iZ0; iZcell-- > 0; ) {
           sum_plus = scalar_t(0);
           sum_minus = scalar_t(0);
