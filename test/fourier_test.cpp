@@ -11,7 +11,7 @@ namespace {
 
 
 void run(const int nR_data, const int nZ_data, Real& hR,
-         Kokkos::Array<Real, 3>& l2err) {
+         Kokkos::Array<Real, 3>& l2err, Real& div_l2) {
   static constexpr int m = 2;
   static constexpr int swidth = 7;
   static constexpr int nphi = 8;
@@ -126,6 +126,50 @@ void run(const int nR_data, const int nZ_data, Real& hR,
     l2err[i] = std::sqrt(l2err[i] * volume);
   }
   hR = data.hermite_locator.dR;
+
+  // Finite-difference check of the divergence in cylindrical coordinates:
+  //   div B = (1/R) d/dR (R B_R) + (1/R) d/dphi B_phi + d/dZ B_Z
+  // The evaluator returns R*B, so with q0 = R*B_R, q1 = R*B_phi, q2 = R*B_Z:
+  //   div B = (1/R) [ d/dR q0 + (1/R) d/dphi q1 + d/dZ q2 ].
+  // Central differences on the reconstructed (divergence-cleaned) field; the
+  // L2 norm over interior sample points should converge to zero.
+  const Real hR_fd = 0.5 * dR_pl;
+  const Real hZ_fd = 0.5 * dZ_pl;
+  const Real hphi_fd = 0.25 * dphi_pl;
+
+  div_l2 = 0.0;
+  Kokkos::parallel_reduce(
+      "divergence_fd",
+      policy3D({1, 1, 0}, {nR_pl - 1, nZ_pl - 1, nphi_pl}),
+      KOKKOS_LAMBDA(const int i, const int j, const int iphi, Real& acc) {
+        const Real R = R0_pl + dR_pl * static_cast<Real>(i);
+        const Real Z = Z0_pl + dZ_pl * static_cast<Real>(j);
+        const Real phi = (static_cast<Real>(iphi) + 0.37) * dphi_pl;
+
+        Dim3 RB_Rp = {}, RB_Rm = {};
+        Dim3 RB_Zp = {}, RB_Zm = {};
+        Dim3 RB_pp = {}, RB_pm = {};
+
+        ev.evalField(RB_Rp, R + hR_fd, Z, phi, data.hermite_data.view_device());
+        ev.evalField(RB_Rm, R - hR_fd, Z, phi, data.hermite_data.view_device());
+        ev.evalField(RB_Zp, R, Z + hZ_fd, phi, data.hermite_data.view_device());
+        ev.evalField(RB_Zm, R, Z - hZ_fd, phi, data.hermite_data.view_device());
+        ev.evalField(RB_pp, R, Z, phi + hphi_fd, data.hermite_data.view_device());
+        ev.evalField(RB_pm, R, Z, phi - hphi_fd, data.hermite_data.view_device());
+
+        // d/dR (R B_R) = d/dR q0
+        const Real dRB_R_dR = (RB_Rp[0] - RB_Rm[0]) / (2.0 * hR_fd);
+        // d/dphi B_phi = (1/R) d/dphi q1
+        const Real dBphi_dphi = (RB_pp[1] - RB_pm[1]) / (2.0 * hphi_fd) / R;
+        // d/dZ B_Z = (1/R) d/dZ q2
+        const Real dBZ_dZ = (RB_Zp[2] - RB_Zm[2]) / (2.0 * hZ_fd) / R;
+
+        const Real div = (dRB_R_dR + dBphi_dphi) / R + dBZ_dZ;
+        acc += div * div;
+      },
+      div_l2);
+
+  div_l2 = std::sqrt(div_l2 * volume);
 }
 
 }  // namespace
@@ -136,13 +180,16 @@ int main() {
   int NR = 64;
   Kokkos::Array<Real, 3> l2err = {};
   Real hR = 0.0;
+  Real div_l2 = 0.0;
   constexpr Real expected_order = 2 * 2 + 2;
 
   for (int ix = 0; ix < 4; ++ix) {
     Real hR_new = 0.0;
     Kokkos::Array<Real, 3> l2err_new = {};
+    Real div_l2_new = 0.0;
 
-    run(NR, 2 * NR, hR_new, l2err_new);
+    run(NR, 2 * NR, hR_new, l2err_new, div_l2_new);
+    std::cout << std::format("div(B) L2 = {:.17g}\n", div_l2_new);
     if (ix > 0) {
       std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2]);
       std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2]);
@@ -156,10 +203,21 @@ int main() {
           return d + 1;
         }
       }
+
+      // The reconstructed field must be divergence free: the finite-difference
+      // divergence should decrease under grid refinement.
+      const Real div_order = std::log(div_l2 / div_l2_new) / std::log(hR / hR_new);
+      if (div_l2_new > 1e-12 && div_l2_new > div_l2) {
+        std::fprintf(stderr, "divergence did not decrease: %le -> %le (order %le)\n",
+                     div_l2, div_l2_new, div_order);
+        Kokkos::finalize();
+        return 4;
+      }
     }
 
     l2err = l2err_new;
     hR = hR_new;
+    div_l2 = div_l2_new;
     NR = static_cast<int>(1.5 * NR);
   }
 
