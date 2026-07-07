@@ -131,9 +131,9 @@ void run(const int nR_data, const int nZ_data, Real& hR,
   //   div B = (1/R) [ d/dR q0 + (1/R) d/dphi q1 + d/dZ q2 ].
   // Central differences on the reconstructed (divergence-cleaned) field; the
   // L2 norm over interior sample points should converge to zero.
-  const Real hR_fd = 0.005 * dR_pl;
-  const Real hZ_fd = 0.005 * dZ_pl;
-  const Real hphi_fd = 0.0025 * dphi_pl;
+  const Real hR_fd = 0.0005 * dR_pl;
+  const Real hZ_fd = 0.0005 * dZ_pl;
+  const Real hphi_fd = 0.00025 * dphi_pl;
 
   div_l2 = 0.0;
   Kokkos::parallel_reduce(
@@ -181,6 +181,9 @@ int main() {
   Real div_l2 = 0.0;
   constexpr Real expected_order = 2 * 2 + 2;
 
+  // Reduced order for B_Z due to div cleaning
+  const std::array<Real, 3> orders{expected_order, expected_order, expected_order - 1};
+
   for (int ix = 0; ix < 4; ++ix) {
     Real hR_new = 0.0;
     Kokkos::Array<Real, 3> l2err_new = {};
@@ -194,9 +197,9 @@ int main() {
 
       for (int d = 0; d < 3; ++d) {
         const Real order = std::log(l2err[d] / l2err_new[d]) / std::log(hR / hR_new);
-        if (static_cast<int>(std::round(order)) < expected_order && l2err_new[d] > 1e-12) {
+        if (static_cast<int>(std::round(order)) < orders[d] && l2err_new[d] > 1e-12) {
           std::fprintf(stderr, "B_%d interpolation did not converge with order %f %le\n",
-                       d, expected_order, order);
+                       d, orders[d], order);
           Kokkos::finalize();
           return d + 1;
         }
@@ -204,10 +207,9 @@ int main() {
 
       // The reconstructed field must be divergence free: the finite-difference
       // divergence should decrease under grid refinement.
-      const Real div_order = std::log(div_l2 / div_l2_new) / std::log(hR / hR_new);
-      if (div_l2_new > 1e-12 && div_l2_new > div_l2) {
-        std::fprintf(stderr, "divergence did not decrease: %le -> %le (order %le)\n",
-                     div_l2, div_l2_new, div_order);
+      if (div_l2_new > 1e-9) {
+        std::fprintf(stderr, "divergence to high %le > %le\n",
+                     div_l2_new, 1e-9);
         Kokkos::finalize();
         return 4;
       }
