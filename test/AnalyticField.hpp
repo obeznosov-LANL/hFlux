@@ -91,7 +91,7 @@ struct AnalyticField {
                              R, Z, phi);
 
     B[0] = (-Z / q(R, Z) - perturb_amp * dpsi_dZ) / R;
-    B[1] = (bphi_amp * dpsi_dZ) / R;
+    B[1] = R_a / R + (bphi_amp * dpsi_dZ) / R;
     B[2] = ((R - R_a) / q(R, Z) + perturb_amp * dpsi_dR -
             bphi_amp * dpsi_dphi / R) / R;
 
