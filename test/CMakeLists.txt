@@ -18,6 +18,13 @@ add_hFlux_test(fourier_test_cpp
     fourier_test.input
 )
 
+add_hFlux_test(poincare_test_cpp
+  SRCS
+    poincare_test.cpp
+  INPUT
+    poincare_test.input
+)
+
 find_package(HDF5 COMPONENTS C CXX)
 target_link_libraries(hermite_test PUBLIC HDF5::HDF5)
 target_link_libraries(hermite_test PUBLIC Kokkos::kokkos)
