@@ -67,7 +67,7 @@ void run(const int nR_data, const int nZ_data) {
   Real E_0 = 70.0;
   Real perturb_amp = 0.05;
 
-  AnalyticField af(q0, q2, R_a, E_0, perturb_amp);
+  AnalyticField af(q0, q2, R_a, E_0, perturb_amp, PerturbationKind::Resonant);
   auto sample_data = data.data;
   Kokkos::parallel_for(
       "set_non_axisymmetric_field",
