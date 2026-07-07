@@ -1,0 +1,194 @@
+#include <cmath>
+#include <format>
+#include <iostream>
+
+#include "hFlux/FieldData3D.hpp"
+#include "hFlux/FourierEvaluator.hpp"
+#include "hFlux/Interpolator.hpp"
+#include "AnalyticField.hpp"
+
+namespace {
+
+
+void run(const int nR_data, const int nZ_data, Real& hR,
+         Kokkos::Array<Real, 3>& l2err, Real& div_l2) {
+  static constexpr int m = 2;
+  static constexpr int swidth = 7;
+  static constexpr int nphi = 9;
+
+  using exec_space = Kokkos::DefaultExecutionSpace;
+  using policy2D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+  using policy3D = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
+
+  const Real R0 = 1.525;
+  const Real Z0 = -2.975;
+  const Real R1 = R0 + 99.0 * 0.0345;
+  const Real Z1 = Z0 + 199.0 * 0.02975;
+  const Real dR = (R1 - R0) / static_cast<Real>(nR_data - 1);
+  const Real dZ = (Z1 - Z0) / static_cast<Real>(nZ_data - 1);
+  const Real dphi = 2.0 * M_PI / static_cast<Real>(nphi);
+
+  FieldData3D<m, swidth, exec_space> data(nR_data, nZ_data, nphi,
+                                           R0, Z0, dR, dZ, dphi);
+  Kokkos::DualView<Real***, Kokkos::LayoutRight, exec_space> fourier_data(
+      "fourier_data", nR_data, nZ_data, (3 + 1) * nphi);
+
+  Real q0 = 2.1;
+  Real q2 = 2.0;
+  Real R_a = 3.0;
+  Real E_0 = 70.0;
+  Real perturb_amp = 0.05;
+
+  AnalyticField af(q0, q2, R_a, E_0, perturb_amp);
+  auto sample_data = data.data;
+  Kokkos::parallel_for(
+      "set_non_axisymmetric_field",
+      policy3D({0, 0, 0}, {nR_data, nZ_data, nphi}),
+      KOKKOS_LAMBDA(const int i, const int j, const int iphi) {
+        const Real R = R0 + dR * static_cast<Real>(i);
+        const Real Z = Z0 + dZ * static_cast<Real>(j);
+        const Real phi = dphi * static_cast<Real>(iphi);
+
+        Dim3 B = {};
+        af.eval(B, R, Z, phi);
+        for (int d = 0; d < 3; ++d) {
+          sample_data.view_device()(i, j, FieldData3D<m, swidth, exec_space>::sample_component(iphi, d)) =
+              R * B[d];
+        }
+      });
+  sample_data.modify_device();
+
+  data.sampleToFourier(data.data.view_device(), fourier_data.view_device());
+  fourier_data.modify_device();
+
+  Interpolator<m, swidth> itrp;
+  itrp.interpolate(
+      data.fd_locator, data.hermite_locator,
+      fourier_data.view_device(),
+      data.hermite_data.view_device());
+  data.hermite_data.modify_device();
+
+  // Make each Fourier channel divergence free.
+  // Layout is stride-4 per channel: quantities 0=R B_R, 1=R B_phi,
+  // 2=R B_Z, 3=phi-correction. nphi channels total.
+  constexpr int component_stride = 4;
+  itrp.cleanDivergence(data.hermite_locator,
+      data.hermite_data.view_device(),
+      /*component0=*/0, /*nfields=*/nphi, component_stride);
+
+  itrp.computeChi(data.hermite_locator,
+      data.hermite_data.view_device(),
+      /*component0=*/0, /*nfields=*/nphi, component_stride);
+
+  data.DifferentiatePhiCorrection(data.hermite_data.view_device());
+  data.hermite_data.modify_device();
+
+  l2err = {};
+
+  const int n_r = 20;
+  const int n_theta = 5;
+  const double dr = 0.01;
+  const double dtheta = 2 * M_PI / (double) n_theta;
+  const Real R_center = 3.0;
+  const Real Z_center = 0.0;
+  int n_turn  = 1000;
+
+  Kokkos::DualView<Real**> poincare_data("poincare_data", 2, n_r * n_theta, n_turn + 1);
+  auto pd_d = poincare_data.view_device();
+  Kokkos::parallel_for(
+      "set_non_axisymmetric_field",
+      policy2D({0, 0}, {n_r, n_theta}),
+      KOKKOS_LAMBDA(const int ir, const int itheta) {
+        pd_d(0, ir + itheta * n_r, 0) = R_center + ir * dr * Kokkos::cos(itheta * dtheta);
+        pd_d(1, ir + itheta * n_r, 0) = Z_center + ir * dr * Kokkos::sin(itheta * dtheta);
+      });
+  poincare_data.modify_device();
+
+  StructuredLocator loc = data.hermite_locator;
+  FourierEvaluator ev{loc};
+
+  struct FieldLine {
+    KOKKOS_INLINE_FUNCTION ErrorCode operator() (const Real phi, const Dim2 X, Dim2& dXdphi) const  {
+      ErrorCode ret = checkBounds(X[0], X[1]);
+      if (ret == ErrorCode::Success) {
+        Dim3 RB = {};
+        ev.evalField(RB, X[0], Z[1], phi, data.hermite_data.view_device());
+        dXdphi[0] = RB[0] / RB[1] * X[0];
+        dXdphi[1] = RB[2] / RB[1] * X[0];
+      } else {
+        dXdphi[0] = 0.0;
+        dXdphi[1] = 0.0;
+      }
+      return ret;
+    }
+    typedef Dim2 value_type;
+  };
+
+  const int n_traces = n_r * n_theta;
+
+  FieldLine f;
+
+  Kokkos::parallel_for("poincare", n_traces,
+  KOKKOS_LAMBDA(int i){
+    Kokkos::Array<Dim2, 10> work;
+    Dim2 trace = {pd_d(0, i, 0), pd_d(1, i, 0)};
+    for (int it = 0; it < n_turn; ++it) {
+      solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-10, 1e-12, 1e-6, 1e-10, 2000000, work);
+      pd_d(0, i, id + 1) = trace[0];
+      pd_d(0, i, id + 1) = trace[1];
+    }
+  });
+}  // namespace
+
+int main() {
+  Kokkos::initialize();
+
+  int NR = 64;
+  Kokkos::Array<Real, 3> l2err = {};
+  Real hR = 0.0;
+  Real div_l2 = 0.0;
+  constexpr Real expected_order = 2 * 2 + 2;
+
+  // Reduced order for B_Z due to div cleaning
+  const std::array<Real, 3> orders{expected_order, expected_order, expected_order - 1};
+
+  for (int ix = 0; ix < 4; ++ix) {
+    Real hR_new = 0.0;
+    Kokkos::Array<Real, 3> l2err_new = {};
+    Real div_l2_new = 0.0;
+
+    run(NR, 2 * NR, hR_new, l2err_new, div_l2_new);
+    std::cout << std::format("div(B) L2 = {:.17g}\n", div_l2_new);
+    if (ix > 0) {
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err[0], l2err[1], l2err[2]);
+      std::cout << std::format("{:.17g} {:.17g} {:.17g}\n", l2err_new[0], l2err_new[1], l2err_new[2]);
+
+      for (int d = 0; d < 3; ++d) {
+        const Real order = std::log(l2err[d] / l2err_new[d]) / std::log(hR / hR_new);
+        if (static_cast<int>(std::round(order)) < orders[d] && l2err_new[d] > 1e-12) {
+          std::fprintf(stderr, "B_%d interpolation did not converge with order %f %le\n",
+                       d, orders[d], order);
+          Kokkos::finalize();
+          return d + 1;
+        }
+      }
+
+      // The reconstructed field must be divergence free: the finite-difference
+      // divergence should decrease under grid refinement.
+      if (div_l2_new > 1e-9) {
+        std::fprintf(stderr, "divergence to high %le > %le\n",
+                     div_l2_new, 1e-9);
+        Kokkos::finalize();
+        return 4;
+      }
+    }
+
+    l2err = l2err_new;
+    hR = hR_new;
+    div_l2 = div_l2_new;
+    NR = static_cast<int>(1.5 * NR);
+  }
+
+  Kokkos::finalize();
+  return 0;
+}
