@@ -52,11 +52,14 @@ struct AnalyticField {
   void perturbation_derivatives(Real& psi, Real& dpsi_dR, Real& dpsi_dZ,
                                 Real& dpsi_dphi, const Real R,
                                 const Real Z, const Real phi) const {
-    // Smooth (C-infinity), phi-periodic perturbation streamfunction:
-    //   psi = exp(-(x^2 + z^2) / (2 sigma^2)) * sin(n phi)
-    // with x = R - R_a, z = Z. Unlike a polar-angle form, this has no
-    // singularity at the magnetic axis (r = 0), so Hermite/Fourier
-    // interpolation retains its full convergence order.
+    // Resonant, phi-periodic perturbation streamfunction:
+    //   psi = env(r) * sin(n phi - m theta)
+    // with poloidal polar coordinates about the magnetic axis (R_a, 0):
+    //   x = R - R_a, z = Z, r = sqrt(x^2 + z^2), theta = atan2(z, x).
+    // The envelope is a Gaussian bump centred on the resonant surface where
+    // q(r) = m / n, i.e. r_mn^2 = (m/n - q0) / q2, and vanishes (times r^m)
+    // at the axis so psi stays smooth there. A perturbation resonant with the
+    // rotational transform opens magnetic islands of poloidal mode number m.
     const Real x = R - R_a;
     const Real z = Z;
 
@@ -69,16 +72,45 @@ struct AnalyticField {
       return;
     }
 
-    const Real sigma = 0.5;
-    const Real inv_sigma2 = 1.0 / (sigma * sigma);
-    const Real envelope = Kokkos::exp(-0.5 * (x * x + z * z) * inv_sigma2);
-    const Real sin_nphi = Kokkos::sin(static_cast<Real>(perturb_n) * phi);
-    const Real cos_nphi = Kokkos::cos(static_cast<Real>(perturb_n) * phi);
+    const Real r2 = x * x + z * z;
+    const Real r = Kokkos::sqrt(r2);
 
-    psi = envelope * sin_nphi;
-    dpsi_dR = -x * inv_sigma2 * envelope * sin_nphi;
-    dpsi_dZ = -z * inv_sigma2 * envelope * sin_nphi;
-    dpsi_dphi = static_cast<Real>(perturb_n) * envelope * cos_nphi;
+    // Guard the coordinate singularity at the axis; the envelope is ~0 there.
+    const Real r_eps = 1e-8;
+    if (r < r_eps) {
+      return;
+    }
+
+    const Real m = static_cast<Real>(perturb_m);
+    const Real n = static_cast<Real>(perturb_n);
+
+    // Resonant minor radius where q(r) = m / n.
+    const Real r_mn2 = (m / n - q0) / q2;
+    const Real r_mn = (r_mn2 > 0.0) ? Kokkos::sqrt(r_mn2) : 0.0;
+
+    // Gaussian bump centred on the resonant surface, forced to vanish at the
+    // axis via the r^m factor to keep psi smooth (C^m) at r = 0.
+    const Real width = 0.05;
+    const Real inv_w2 = 1.0 / (width * width);
+    const Real bump = Kokkos::exp(-0.5 * (r - r_mn) * (r - r_mn) * inv_w2);
+    const Real rpow = Kokkos::pow(r, m);
+    const Real env = rpow * bump;
+
+    // dEnv/dr = (m/r) * env - (r - r_mn) * inv_w2 * env
+    const Real denv_dr = env * (m / r - (r - r_mn) * inv_w2);
+
+    const Real theta = Kokkos::atan2(z, x);
+    const Real a = n * phi - m * theta;
+    const Real sin_a = Kokkos::sin(a);
+    const Real cos_a = Kokkos::cos(a);
+
+    // dr/dx = x/r, dr/dz = z/r; dtheta/dx = -z/r^2, dtheta/dz = x/r^2.
+    // dpsi/dx = denv_dr * (x/r) * sin_a + env * cos_a * (-m) * dtheta/dx
+    // dpsi/dz = denv_dr * (z/r) * sin_a + env * cos_a * (-m) * dtheta/dz
+    psi = env * sin_a;
+    dpsi_dR = denv_dr * (x / r) * sin_a + env * cos_a * (m * z / r2);
+    dpsi_dZ = denv_dr * (z / r) * sin_a - env * cos_a * (m * x / r2);
+    dpsi_dphi = env * n * cos_a;
   }
 
   KOKKOS_INLINE_FUNCTION

@@ -61,7 +61,7 @@ void run(const int nR_data, const int nZ_data) {
   Kokkos::DualView<Real***, Kokkos::LayoutRight, exec_space> fourier_data(
       "fourier_data", nR_data, nZ_data, (3 + 1) * nphi);
 
-  Real q0 = 2.1;
+  Real q0 = 1.98;
   Real q2 = 2.0;
   Real R_a = 3.0;
   Real E_0 = 70.0;
