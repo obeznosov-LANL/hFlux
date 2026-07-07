@@ -15,12 +15,28 @@ target_include_directories(hflux
 
 target_link_libraries(hflux PUBLIC Kokkos::kokkos)
 
+# ------------------------------------------------------------
+# Command-line tools
+# ------------------------------------------------------------
+add_executable(poincare_tool ${CMAKE_CURRENT_SOURCE_DIR}/poincare_main.cpp)
+target_link_libraries(poincare_tool PRIVATE hflux::hflux m)
+target_compile_features(poincare_tool PRIVATE cxx_std_20)
+
+add_executable(dump_field ${CMAKE_CURRENT_SOURCE_DIR}/dump_field_main.cpp)
+target_include_directories(dump_field PRIVATE ${CMAKE_SOURCE_DIR}/test)
+target_link_libraries(dump_field PRIVATE hflux::hflux m)
+target_compile_features(dump_field PRIVATE cxx_std_20)
+
 include(GNUInstallDirs)
 
 install(TARGETS hflux
     EXPORT hflux-targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS poincare_tool dump_field
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
