@@ -1,6 +1,5 @@
 add_library(hflux
-  ${CMAKE_CURRENT_SOURCE_DIR}/hFlux.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/c_wrapper.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/hFlux.cpp)
 
 add_library(hflux::hflux ALIAS hflux)
 
