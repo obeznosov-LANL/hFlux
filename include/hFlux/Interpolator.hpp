@@ -687,6 +687,207 @@ struct Interpolator {
 
     computeFlux(hermite_locator, hermite_data, psi, b_component0);
   }
+
+  // Phi-dependent flux: computes the poloidal flux function psi for each
+  // Fourier channel of a stride-`component_stride` field layout, storing the
+  // per-channel Hermite psi coefficients in a rank-5 view whose channel axis
+  // is contiguous (stride 1), ready for evalTaylorFourier. This mirrors the
+  // 2D computeFlux integration but with an outer ifield (Fourier channel)
+  // loop. Field slots read per channel: base+0 = R B_R, base+2 = R B_Z, with
+  // base = component0 + ifield * component_stride.
+  template<class HermiteView, class PsiView>
+  void computeFluxFourier(const StructuredLocator& hermite_locator,
+                   HermiteView hermite_data,
+                   PsiView psi_fourier_data,
+                   int component0,
+                   int nfields,
+                   int component_stride)
+  {
+    static_assert(HermiteView::rank == 5,
+                  "computeFluxFourier expects rank-5 view: (idR,idZ,di,iR,iZ)");
+    static_assert(PsiView::rank == 5,
+                  "computeFluxFourier expects rank-5 psi view: (idR,idZ,channel,iR,iZ)");
+
+    KOKKOS_ASSERT(component0 >= 0);
+    KOKKOS_ASSERT(component0 + (nfields - 1) * component_stride + 2 < hermite_data.extent_int(2));
+    KOKKOS_ASSERT(nfields <= psi_fourier_data.extent_int(2));
+
+    using scalar_t = typename HermiteView::non_const_value_type;
+
+    const int Pr   = hermite_data.extent_int(0);
+    const int Pz   = hermite_data.extent_int(1);
+    const int nR   = hermite_data.extent_int(3);
+    const int nZ   = hermite_data.extent_int(4);
+
+    const int PpsiR = psi_fourier_data.extent_int(0);
+    const int PpsiZ = psi_fourier_data.extent_int(1);
+
+    const int iR0 = nR / 2;
+    const int iZ0 = nZ / 2;
+
+    const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
+    const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
+    const scalar_t half = scalar_t(0.5);
+    const scalar_t minus_half = scalar_t(-0.5);
+
+    using exec_space = typename HermiteView::execution_space;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
+    using policy2D_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+
+    // psi := - int_Zc^Z RB_R(R,Z') dZ'  (per Fourier channel)
+    Kokkos::parallel_for("computeFluxFourier_Z", policy_t({0, 0, 0}, {nfields, nR, PpsiR}),
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
+      {
+        const int base = component0 + ifield * component_stride;
+        for (int iZcell = 0; iZcell < nZ; ++iZcell) {
+          for (int idZ = 0; idZ < PpsiZ; ++idZ) {
+            psi_fourier_data(idR, idZ, ifield, iRcell, iZcell) = scalar_t(0);
+          }
+
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            scalar_t val = scalar_t(0);
+            if (idR < Pr && (idZ - 1) < Pz) {
+              val = -hZ_s * hermite_data(idR, idZ - 1, base, iRcell, iZcell) /
+                    static_cast<scalar_t>(idZ);
+            }
+            psi_fourier_data(idR, idZ, ifield, iRcell, iZcell) = val;
+          }
+        }
+
+        scalar_t sum_plus = scalar_t(0);
+        scalar_t sum_minus = scalar_t(0);
+        scalar_t p_plus = half;
+        scalar_t p_minus = minus_half;
+        for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+          const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZ0);
+          sum_plus += ak * p_plus;
+          sum_minus += ak * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        scalar_t a0 = -sum_minus;
+        psi_fourier_data(idR, 0, ifield, iRcell, iZ0) = a0;
+        scalar_t boundary = a0 + sum_plus;
+
+        for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_minus;
+          psi_fourier_data(idR, 0, ifield, iRcell, iZcell) = a0;
+          boundary = a0 + sum_plus;
+        }
+
+        boundary = scalar_t(0);
+        for (int iZcell = iZ0; iZcell-- > 0; ) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_plus;
+          psi_fourier_data(idR, 0, ifield, iRcell, iZcell) = a0;
+          boundary = a0 + sum_minus;
+        }
+      });
+
+    Kokkos::fence();
+
+    // psi += int_Rc RB_Z (R',Zc) dR'  (per Fourier channel)
+    Kokkos::parallel_for("computeFluxFourier_R", policy2D_t({0, 0}, {nfields, nZ}),
+      KOKKOS_LAMBDA(const int ifield, const int iZcell)
+      {
+        const int base = component0 + ifield * component_stride;
+        for (int iRcell = 0; iRcell < nR; ++iRcell) {
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t z_anchor_coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              z_anchor_coeff = eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half);
+            }
+            psi_fourier_data(idR, 0, ifield, iRcell, iZcell) +=
+                hR_s * z_anchor_coeff / static_cast<scalar_t>(idR);
+          }
+        }
+
+        scalar_t sum_plus = scalar_t(0);
+        scalar_t sum_minus = scalar_t(0);
+        scalar_t p_plus = half;
+        scalar_t p_minus = minus_half;
+        for (int idR = 1; idR < PpsiR; ++idR) {
+          scalar_t coeff = scalar_t(0);
+          if ((idR - 1) < Pr) {
+            coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iR0, iZ0, Pz, minus_half) /
+                    static_cast<scalar_t>(idR);
+          }
+          sum_plus += coeff * p_plus;
+          sum_minus += coeff * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        scalar_t a0 = -sum_minus;
+        psi_fourier_data(0, 0, ifield, iR0, iZcell) += a0;
+        scalar_t boundary = a0 + sum_plus;
+
+        for (int iRcell = iR0 + 1; iRcell < nR; ++iRcell) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
+                      static_cast<scalar_t>(idR);
+            }
+            sum_plus += coeff * p_plus;
+            sum_minus += coeff * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_minus;
+          psi_fourier_data(0, 0, ifield, iRcell, iZcell) += a0;
+          boundary = a0 + sum_plus;
+        }
+
+        boundary = scalar_t(0);
+        for (int iRcell = iR0; iRcell-- > 0; ) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
+                      static_cast<scalar_t>(idR);
+            }
+            sum_plus += coeff * p_plus;
+            sum_minus += coeff * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_plus;
+          psi_fourier_data(0, 0, ifield, iRcell, iZcell) += a0;
+          boundary = a0 + sum_minus;
+        }
+      });
+  }
 };
 
 
