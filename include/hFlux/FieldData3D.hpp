@@ -74,10 +74,10 @@ struct FieldData3D {
 	  // For even nphi the top cosine channel (k == ncos) is the Nyquist mode;
 	  // its derivative (a sine at the Nyquist frequency) vanishes identically on
 	  // the phi sample grid, so it must be zeroed to avoid a spurious/aliased term.
-	  const bool is_nyquist = (nphi_in % 2 == 0) && (channel == ncos);
-	  if (is_nyquist) {
-	    return 0;
-	  }
+//  const bool is_nyquist = (nphi_in % 2 == 0) && (channel == ncos);
+//  if (is_nyquist) {
+//    return 0;
+//  }
 	  return (channel <= ncos) ? -channel : (channel - ncos);
 	}
 
