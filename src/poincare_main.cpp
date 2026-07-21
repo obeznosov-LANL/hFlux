@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
 
   // Interpolation order parameters are fixed at compile time (as in the tests).
   static constexpr int m = 2;
-  static constexpr int swidth = 7;
+  static constexpr int swidth = 5;
 
   int NR = 0, NZ = 0, Nphi = 0, n_turn = 0;
   Real R0 = 0.0, Z0 = 0.0, dR = 0.0, dZ = 0.0;
@@ -180,13 +180,13 @@ int main(int argc, char** argv) {
     data.hermite_data.modify_device();
 
     // Divergence clean each Fourier channel (stride-4 layout, Nphi channels).
-    constexpr int component_stride = 4;
-    itrp.cleanDivergence(data.hermite_locator, data.hermite_data.view_device(),
-                         /*component0=*/0, /*nfields=*/Nphi, component_stride);
-    itrp.computeChi(data.hermite_locator, data.hermite_data.view_device(),
-                    /*component0=*/0, /*nfields=*/Nphi, component_stride);
-    data.DifferentiatePhiCorrection(data.hermite_data.view_device());
-    data.hermite_data.modify_device();
+//    constexpr int component_stride = 4;
+//    itrp.cleanDivergence(data.hermite_locator, data.hermite_data.view_device(),
+//                         /*component0=*/0, /*nfields=*/Nphi, component_stride);
+//    itrp.computeChi(data.hermite_locator, data.hermite_data.view_device(),
+//                    /*component0=*/0, /*nfields=*/Nphi, component_stride);
+//    data.DifferentiatePhiCorrection(data.hermite_data.view_device());
+//    data.hermite_data.modify_device();
 
     FourierEvaluator ev{data.hermite_locator};
 
@@ -238,8 +238,8 @@ int main(int argc, char** argv) {
 
     // ----- Fine-mesh field dump (same mesh as fourier_test_cpp) -----
     const int nR_pl = 160;
-    const int nZ_pl = 320;
-    const int nphi_pl = 7;
+    const int nZ_pl = 160;
+    const int nphi_pl = 90;
     const Real eps = 1e-8;
     const Real R0_pl = data.hermite_locator.R0 + eps;
     const Real Z0_pl = data.hermite_locator.Z0 + eps;
@@ -258,7 +258,7 @@ int main(int argc, char** argv) {
         KOKKOS_LAMBDA(const int i, const int j, const int iphi) {
           const Real R = R0_pl + dR_pl * static_cast<Real>(i);
           const Real Z = Z0_pl + dZ_pl * static_cast<Real>(j);
-          const Real phi = (static_cast<Real>(iphi) + 0.37) * dphi_pl;
+          const Real phi = dphi_pl * iphi;
           Dim3 RB = {};
           ev.evalField(RB, R, Z, phi, data.hermite_data.view_device());
           fine_d(i, j, iphi, 0) = RB[0] / R;
