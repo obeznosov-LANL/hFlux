@@ -123,8 +123,8 @@ int main(int argc, char** argv) {
   const std::string out_path = argv[3];
 
   // Interpolation order parameters are fixed at compile time (as in the tests).
-  static constexpr int m = 2;
-  static constexpr int swidth = 5;
+  static constexpr int m = 4;
+  static constexpr int swidth = 7;
 
   int NR = 0, NZ = 0, Nphi = 0, n_turn = 0;
   Real R0 = 0.0, Z0 = 0.0, dR = 0.0, dZ = 0.0;
@@ -179,14 +179,21 @@ int main(int argc, char** argv) {
                      data.hermite_data.view_device());
     data.hermite_data.modify_device();
 
+
+    int R_center = -1;
+    int Z_center = -1;
+  //  data.hermite_locator.locateCell(1.61, 0.0, R_center, Z_center);
+
     // Divergence clean each Fourier channel (stride-4 layout, Nphi channels).
-//    constexpr int component_stride = 4;
-//    itrp.cleanDivergence(data.hermite_locator, data.hermite_data.view_device(),
-//                         /*component0=*/0, /*nfields=*/Nphi, component_stride);
-//    itrp.computeChi(data.hermite_locator, data.hermite_data.view_device(),
-//                    /*component0=*/0, /*nfields=*/Nphi, component_stride);
-//    data.DifferentiatePhiCorrection(data.hermite_data.view_device());
-//    data.hermite_data.modify_device();
+    constexpr int component_stride = 4;
+    itrp.cleanDivergence(data.hermite_locator, data.hermite_data.view_device(),
+                         /*component0=*/0, /*nfields=*/Nphi, component_stride,
+                         Z_center);
+    itrp.computeChi(data.hermite_locator, data.hermite_data.view_device(),
+                    /*component0=*/0, /*nfields=*/Nphi, component_stride,
+                    R_center, Z_center);
+    data.DifferentiatePhiCorrection(data.hermite_data.view_device());
+    data.hermite_data.modify_device();
 
     FourierEvaluator ev{data.hermite_locator};
 
@@ -211,8 +218,10 @@ int main(int argc, char** argv) {
           Kokkos::Array<Dim2, 10> work;
           Dim2 trace = {pd_d(0, i, 0), pd_d(1, i, 0)};
           for (int it = 0; it < n_turn; ++it) {
-            solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-10, 1e-12, 1e-6, 1e-10,
+            auto ret = solve_dopri5(f, trace, 0.0, 2.0 * M_PI, 1e-8, 1e-9, 1e-6, 1e-10,
                          2000000, work);
+//            auto ret = solve_dopri5_fixed(f, trace, 0.0, 2.0 * M_PI, 1e-6, work);
+            if (ret != ErrorCode::Success) break;
             pd_d(0, i, it + 1) = trace[0];
             pd_d(1, i, it + 1) = trace[1];
           }

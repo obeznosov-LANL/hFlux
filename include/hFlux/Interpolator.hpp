@@ -243,7 +243,7 @@ struct Interpolator {
 
 
   template<class HermiteView>
-  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0, int nfields = 1, int component_stride = 3)
+  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0, int nfields = 1, int component_stride = 3, int iZ0 = -1)
   {
     static_assert(HermiteView::rank == 5,
                   "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
@@ -259,7 +259,7 @@ struct Interpolator {
     const int nR   = hermite_data.extent_int(3);  // # radial cells
     const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
-    const int iZ0 = nZ / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
 
     const scalar_t hZ_over_hR = static_cast<scalar_t>(hermite_locator.dZ / hermite_locator.dR);
 
@@ -344,7 +344,9 @@ struct Interpolator {
                    HermiteView hermite_data,
                    int component0,
                    int nfields,
-                   int component_stride) {
+                   int component_stride,
+                   int iR0 = -1,
+                   int iZ0 = -1) {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
 
@@ -366,8 +368,8 @@ struct Interpolator {
     const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
 
-    const int iR0 = nR / 2;
-    const int iZ0 = nZ / 2;
+     if (iR0 < 0) iR0 = nR / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
 
     const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
     const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
@@ -465,7 +467,9 @@ struct Interpolator {
   template<class HermiteView, class PsiView>
   void computeFlux(const StructuredLocator& hermite_locator,
                    HermiteView hermite_data,
-                   PsiView psi_hermite_data, int component0 = 0)
+                   PsiView psi_hermite_data, int component0 = 0,
+                   int iR0 = -1,
+                   int iZ0 = -1)
   {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
@@ -493,8 +497,8 @@ struct Interpolator {
     const int PpsiR = psi_hermite_data.extent_int(0);
     const int PpsiZ = psi_hermite_data.extent_int(1);
 
-    const int iR0 = nR / 2;
-    const int iZ0 = nZ / 2;
+     if (iR0 < 0) iR0 = nR / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
 
     const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
     const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
