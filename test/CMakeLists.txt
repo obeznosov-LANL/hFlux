@@ -11,19 +11,19 @@ add_hFlux_test(hermite_test
     hermite_test.input
 )
 
-add_hFlux_test(hermite_test_c
+add_hFlux_test(fourier_test_cpp
   SRCS
-    hermite_test.c
+    fourier_test.cpp
   INPUT
-    hermite_test.input
+    fourier_test.input
 )
 
-# add_hFlux_test(poincare_test_c
-#   SRCS
-#     poincare_test.c
-#   INPUT
-#     hermite_test.input
-# )
+add_hFlux_test(poincare_test_cpp
+  SRCS
+    poincare_test.cpp
+  INPUT
+    poincare_test.input
+)
 
 find_package(HDF5 COMPONENTS C CXX)
 target_link_libraries(hermite_test PUBLIC HDF5::HDF5)
