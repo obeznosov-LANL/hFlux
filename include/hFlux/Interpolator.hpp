@@ -4,10 +4,11 @@
 #include "FiniteDifferenceWeights.hpp"
 #include "StructuredLocator.hpp"
 
-template <class RBZView, class Scalar>
+template <class View, class Scalar>
 KOKKOS_INLINE_FUNCTION
-void eval_nonconst_at_half(const RBZView& RBZ,
+void eval_nonconst_at_half(const View& hermite_data,
                            const int idR,
+                           const int component,
                            const int iRcell,
                            const int iZcell,
                            const int Pz,
@@ -22,7 +23,7 @@ void eval_nonconst_at_half(const RBZView& RBZ,
   Scalar p_plus  = Scalar(0.5);   // (+0.5)^1
   Scalar p_minus = Scalar(-0.5);  // (-0.5)^1
   for (int k = 1; k < Pz; ++k) {
-    const Scalar ak = RBZ(idR, k, iRcell, iZcell);
+    const Scalar ak = hermite_data(idR, k, component, iRcell, iZcell);
     sum_plus  += ak * p_plus;
     sum_minus += ak * p_minus;
     p_plus  *= Scalar(0.5);
@@ -34,6 +35,7 @@ template <class View, class Scalar>
 KOKKOS_INLINE_FUNCTION
 Scalar eval_z_at(const View& data,
                  const int idR,
+                 const int component,
                  const int iRcell,
                  const int iZcell,
                  const int Pz,
@@ -42,7 +44,7 @@ Scalar eval_z_at(const View& data,
   Scalar sum = Scalar(0);
   Scalar p = Scalar(1);
   for (int idZ = 0; idZ < Pz; ++idZ) {
-    sum += data(idR, idZ, iRcell, iZcell) * p;
+    sum += data(idR, idZ, component, iRcell, iZcell) * p;
     p *= zeta;
   }
 
@@ -87,22 +89,23 @@ template<int m, int swidth, class DataView, class HermiteView>
 void compute_derivatives_grid (DataView data, HermiteView hermite_data,
                          const Real ratioR, const Real ratioZ) {
 
-  static_assert(DataView::rank == 2);
-  static_assert(HermiteView::rank == 4);
+  static_assert(DataView::rank == 3);
+  static_assert(HermiteView::rank == 5);
 
   KOKKOS_ASSERT(ratioR > 1.0);
   KOKKOS_ASSERT(ratioZ > 1.0);
 
   using exec_space = typename HermiteView::execution_space;
 
-  const size_t n1 = hermite_data.extent(2);
-  const size_t n2 = hermite_data.extent(3);
+  const size_t n0 = hermite_data.extent(2);
+  const size_t n1 = hermite_data.extent(3);
+  const size_t n2 = hermite_data.extent(4);
 
   Kokkos::deep_copy(hermite_data, 0.0);
 
   Kokkos::parallel_for("compute_derivatives",
-  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n1, n2}),
-  KOKKOS_LAMBDA(int i, int j) {
+  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>({0,0,0}, {n0, n1, n2}),
+  KOKKOS_LAMBDA(int component, int i, int j) {
     for (int offx = 0; offx < 2; ++offx) {
       for (int offy = 0; offy < 2; ++offy) {
         int ii = (i + offx) * (swidth-1);
@@ -111,9 +114,9 @@ void compute_derivatives_grid (DataView data, HermiteView hermite_data,
         int idy = (m+1) * offy;
 
         auto data_stencil = Kokkos::subview(data,
-            Kokkos::make_pair(ii, ii + swidth), Kokkos::make_pair(jj, jj + swidth));
+            Kokkos::make_pair(ii, ii + swidth), Kokkos::make_pair(jj, jj + swidth), component);
         auto hermite_data_cell = Kokkos::subview(hermite_data,
-            Kokkos::make_pair(idx, idx + m+1), Kokkos::make_pair(idy, idy + m+1), i, j);
+            Kokkos::make_pair(idx, idx + m+1), Kokkos::make_pair(idy, idy + m+1), component, i, j);
 
         computeDerivativesStencil<m, swidth>(data_stencil, hermite_data_cell, ratioR, ratioZ);
       }
@@ -179,17 +182,18 @@ void interpolate2D(ViewHermiteData view_hermite_data) {
 
 template<int m, class HermiteView>
 void interpolate_grid (HermiteView hermite_data) {
-  static_assert(HermiteView::rank == 4);
+  static_assert(HermiteView::rank == 5);
 
   using exec_space = typename HermiteView::execution_space;
 
-  const size_t n1 = hermite_data.extent(2);
-  const size_t n2 = hermite_data.extent(3);
+  const size_t n0 = hermite_data.extent(2);
+  const size_t n1 = hermite_data.extent(3);
+  const size_t n2 = hermite_data.extent(4);
 
   Kokkos::parallel_for("interpolate",
-  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>({0,0},{n1, n2}),
-  KOKKOS_LAMBDA(int i, int j) {
-    auto sbv_hermite_data = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, i, j);
+  Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>({0,0,0},{n0, n1, n2}),
+  KOKKOS_LAMBDA(int component, int i, int j) {
+    auto sbv_hermite_data = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, component, i, j);
     interpolate2D<m>(sbv_hermite_data);
   });
 }
@@ -197,111 +201,97 @@ void interpolate_grid (HermiteView hermite_data) {
 template<int m, int swidth = 7>
 struct Interpolator {
   template<class DataView, class HermiteView>
-  void interpolateComponent(const StructuredLocator& fd_locator,
+  void interpolate(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
-                   HermiteView hermite_data,
-                   int component) const {
-
-		auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, component);
-		auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, component, Kokkos::ALL, Kokkos::ALL);
+                   HermiteView hermite_data) const {
 
     const Real scaleR = hermite_locator.dR / fd_locator.dR;
     const Real scaleZ = hermite_locator.dZ / fd_locator.dZ;
 
-    compute_derivatives_grid<m, swidth>(dd, hh, scaleR, scaleZ);
-    interpolate_grid<m>(hh);
+    compute_derivatives_grid<m, swidth>(data, hermite_data, scaleR, scaleZ);
+    interpolate_grid<m>(hermite_data);
   }
+
 
   template<int ncomp, class DataView, class HermiteView>
   void interpolateRange(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
                    HermiteView hermite_data, int component0 = 0) const {
-
      KOKKOS_ASSERT(component0 >= 0);
      KOKKOS_ASSERT(component0 + ncomp <= data.extent_int(2));
      KOKKOS_ASSERT(component0 + ncomp <= hermite_data.extent_int(2));
 
-		 for (int i = 0; i < ncomp; ++i) {
-       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, component0 + i);
-     }
+
+		auto dd = Kokkos::subview(data, Kokkos::ALL, Kokkos::ALL, Kokkos::make_pair(component0, component0 + ncomp));
+		auto hh = Kokkos::subview(hermite_data, Kokkos::ALL, Kokkos::ALL, Kokkos::make_pair(component0, component0 + ncomp), Kokkos::ALL, Kokkos::ALL);
+
+    interpolate(fd_locator, hermite_locator, dd, hh);
   }
 
   template<class DataView, class HermiteView>
-  void interpolate(const StructuredLocator& fd_locator,
+  void interpolateComponent(const StructuredLocator& fd_locator,
                    const StructuredLocator& hermite_locator,
                    DataView data,
-                   HermiteView hermite_data) const {
+                   HermiteView hermite_data,
+                   int component) const {
 
-    const int ncomp = data.extent_int(2);
-		for (int i = 0; i < ncomp; ++i) {
-       interpolateComponent(fd_locator, hermite_locator, data, hermite_data, i);
-    }
+     interpolateRange<1>(fd_locator, hermite_locator, data, hermite_data, component);
   }
-
 
 
 
   template<class HermiteView>
-  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0)
+  void cleanDivergence(const StructuredLocator& hermite_locator, HermiteView hermite_data, int component0 = 0, int nfields = 1, int component_stride = 3, int iZ0 = -1)
   {
     static_assert(HermiteView::rank == 5,
                   "cleanDivergence expects rank-5 view: (idR,idZ,di,iR,iZ)");
     KOKKOS_ASSERT(component0 >= 0);
-    KOKKOS_ASSERT(component0 + 2 < hermite_data.extent_int(2));
+    KOKKOS_ASSERT(component0 + (nfields - 1) * component_stride + 2 < hermite_data.extent_int(2));
 
     using scalar_t = typename HermiteView::non_const_value_type;
 
     // hermite_data(idR, idZ, di, iR, iZ)
-    // Subviews become rank-4: (idR, idZ, iR, iZ)
-    auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0,
-                               Kokkos::ALL(), Kokkos::ALL());
-    auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
-                               Kokkos::ALL(), Kokkos::ALL());
 
-    const int Pr   = RBZ.extent_int(0);  // # idR coefficients
-    const int Pz   = RBZ.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
-    const int nR   = RBZ.extent_int(2);  // # radial cells
-    const int nZ   = RBZ.extent_int(3);  // # axial cells
+    const int Pr   = hermite_data.extent_int(0);  // # idR coefficients
+    const int Pz   = hermite_data.extent_int(1);  // # idZ coefficients (incl. constant term k=0)
+    const int nR   = hermite_data.extent_int(3);  // # radial cells
+    const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
-    const int PrBR = RBR.extent_int(0);
-    const int PzBR = RBR.extent_int(1);
-
-    const int iZ0 = nZ / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
 
     const scalar_t hZ_over_hR = static_cast<scalar_t>(hermite_locator.dZ / hermite_locator.dR);
 
     using exec_space = typename HermiteView::execution_space;
-    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
 
     // One work-item per (iRcell, idR). Inside we do:
     //  (1) local fill of non-constant z-coeffs from RBR
     //  (2) O(nZ) marching integration for the constant term a0 to enforce continuity
-    Kokkos::parallel_for("cleanDivergence", policy_t({0, 0}, {nR, Pr}),
-      KOKKOS_LAMBDA(const int iRcell, const int idR)
+    Kokkos::parallel_for("cleanDivergence", policy_t({0, 0, 0}, {nfields, nR, Pr}),
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
       {
+        int base = component0 + ifield * component_stride;
         // Anchor: preserve the existing constant coefficient at the center plane
-        const scalar_t a0_center = RBZ(idR, 0, iRcell, iZ0);
+        const scalar_t a0_center = hermite_data(idR, 0, base + 2, iRcell, iZ0);
 
         // --- (1) Fill non-constant Z coefficients from RBR (and init a0 everywhere to anchor)
         // RBZ(idR,k) = - RBR(idR+1,k-1) * (hZ/hR) * (idR+1)/k   for k>=1
         const scalar_t scale = -hZ_over_hR * static_cast<scalar_t>(idR + 1);
 
         for (int iZcell = 0; iZcell < nZ; ++iZcell) {
-          RBZ(idR, 0, iRcell, iZcell) = a0_center;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0_center;
 
           for (int k = 1; k < Pz; ++k) {
             scalar_t val = scalar_t(0);
 
             // Bounds-checked so we never read past RBR extents
-            if ((idR + 1) < PrBR && (k - 1) < PzBR) {
-              val = RBR(idR + 1, k - 1, iRcell, iZcell) * scale / static_cast<scalar_t>(k);
+            if ((idR + 1) < Pr && (k - 1) < Pz) {
+              val = hermite_data(idR + 1, k - 1, base + 0, iRcell, iZcell) * scale / static_cast<scalar_t>(k);
             }
 
-            RBZ(idR, k, iRcell, iZcell) = val;
+            hermite_data(idR, k, base + 2, iRcell, iZcell) = val;
           }
         }
 
@@ -310,7 +300,7 @@ struct Interpolator {
         // Center cell non-constant contributions at boundaries:
         scalar_t sum_plus0  = scalar_t(0);
         scalar_t sum_minus0 = scalar_t(0);
-        eval_nonconst_at_half(RBZ, idR, iRcell, iZ0, Pz, sum_plus0, sum_minus0);
+        eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZ0, Pz, sum_plus0, sum_minus0);
 
         // Center cell boundary values:
         scalar_t boundary_top    = a0_center + sum_plus0;   // at Δz = +0.5
@@ -321,11 +311,11 @@ struct Interpolator {
         for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
           scalar_t sum_plus  = scalar_t(0);
           scalar_t sum_minus = scalar_t(0);
-          eval_nonconst_at_half(RBZ, idR, iRcell, iZcell, Pz, sum_plus, sum_minus);
+          eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZcell, Pz, sum_plus, sum_minus);
 
           // Want: a0 + sum_minus == boundary   (match at Δz = -0.5)
           const scalar_t a0 = boundary - sum_minus;
-          RBZ(idR, 0, iRcell, iZcell) = a0;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0;
 
           // Next boundary is this cell's top boundary (Δz = +0.5)
           boundary = a0 + sum_plus;
@@ -336,11 +326,11 @@ struct Interpolator {
         for (int iZcell = iZ0; iZcell-- > 0; ) { // iZ0-1 ... 0 (safe even if iZ0==0)
           scalar_t sum_plus  = scalar_t(0);
           scalar_t sum_minus = scalar_t(0);
-          eval_nonconst_at_half(RBZ, idR, iRcell, iZcell, Pz, sum_plus, sum_minus);
+          eval_nonconst_at_half(hermite_data, idR, base + 2, iRcell, iZcell, Pz, sum_plus, sum_minus);
 
           // Want: a0 + sum_plus == boundary    (match at Δz = +0.5)
           const scalar_t a0 = boundary - sum_plus;
-          RBZ(idR, 0, iRcell, iZcell) = a0;
+          hermite_data(idR, 0, base + 2, iRcell, iZcell) = a0;
 
           // Next boundary is this cell's bottom boundary (Δz = -0.5)
           boundary = a0 + sum_minus;
@@ -348,10 +338,138 @@ struct Interpolator {
       });
   };
 
+
+  template<class HermiteView>
+  void computeChi(const StructuredLocator& hermite_locator,
+                   HermiteView hermite_data,
+                   int component0,
+                   int nfields,
+                   int component_stride,
+                   int iR0 = -1,
+                   int iZ0 = -1) {
+    static_assert(HermiteView::rank == 5,
+                  "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
+
+    KOKKOS_ASSERT(component0 >= 0);
+    KOKKOS_ASSERT(component0 + (nfields - 1) * component_stride + 2 < hermite_data.extent_int(2));
+
+    using scalar_t = typename HermiteView::non_const_value_type;
+
+    // hermite_data(idR, idZ, di, iR, iZ)
+    // idR - polynomial coefficient index in R
+    // idZ - polynomial coefficient index in Z
+    // di - field component index: 0 - RB_R, 1 - RB_phi, 2 - RB_Z
+    // iR - cell index in R
+    // iZ - cell index in Z
+
+    const int Pr   = hermite_data.extent_int(0);  // # idR coefficients in RB_Z
+    const int Pz   = hermite_data.extent_int(1);  // # idZ coefficients in RB_Z
+    const int nR   = hermite_data.extent_int(3);  // # radial cells
+    const int nZ   = hermite_data.extent_int(4);  // # axial cells
+
+
+     if (iR0 < 0) iR0 = nR / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
+
+    const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
+    const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
+    const scalar_t half = scalar_t(0.5);
+    const scalar_t minus_half = scalar_t(-0.5);
+
+    using exec_space = typename HermiteView::execution_space;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
+    using policy1D_t = Kokkos::RangePolicy<exec_space>;
+
+    // compute Z integral and store it in psi coefficients. Thats is psi := - int_Zc^Z RB_R(R,Z') dZ'
+    Kokkos::parallel_for("computeChi", policy_t({0, 0, 0}, {nfields, nR, Pr}),
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
+      {
+        int base = component0 + ifield * component_stride;
+        for (int iZcell = 0; iZcell < nZ; ++iZcell) {
+          for (int idZ = 0; idZ < Pz; ++idZ) {
+            hermite_data(idR, idZ, base + 3, iRcell, iZcell) = scalar_t(0);
+          }
+
+          for (int idZ = 1; idZ < Pz; ++idZ) {
+            scalar_t val = scalar_t(0);
+            if (idR < Pr && (idZ - 1) < Pz) {
+              val = hZ_s * hermite_data(idR, idZ - 1, base + 1, iRcell, iZcell) /
+                    static_cast<scalar_t>(idZ);
+            }
+
+            hermite_data(idR, idZ, base + 3, iRcell, iZcell) = val;
+          }
+        }
+
+        // Anchor at the center of the central Z cell (Delta z = 0) so that
+        // chi (and hence the phi-correction d/dphi chi) vanishes at exactly the
+        // point where cleanDivergence anchors the constant RB_Z coefficient
+        // (hermite_data(idR, 0, base + 2, iRcell, iZ0)). This keeps the
+        // reconstructed RB_Z = RB_Z_clean - correction consistent with the
+        // sampled value at the anchor, avoiding a constant per-channel offset.
+        scalar_t sum_plus = scalar_t(0);
+        scalar_t sum_minus = scalar_t(0);
+        scalar_t p_plus = half;
+        scalar_t p_minus = minus_half;
+        for (int idZ = 1; idZ < Pz; ++idZ) {
+          const scalar_t ak = hermite_data(idR, idZ, base + 3, iRcell, iZ0);
+          sum_plus += ak * p_plus;
+          sum_minus += ak * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        scalar_t a0 = scalar_t(0);
+        hermite_data(idR, 0, base + 3, iRcell, iZ0) = a0;
+        scalar_t boundary = a0 + sum_plus;
+        // Bottom edge of the central cell, used to seed the downward sweep.
+        const scalar_t central_bottom = a0 + sum_minus;
+
+        for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < Pz; ++idZ) {
+            const scalar_t ak = hermite_data(idR, idZ, base + 3, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+
+          a0 = boundary - sum_minus;
+          hermite_data(idR, 0, base + 3, iRcell, iZcell) = a0;
+          boundary = a0 + sum_plus;
+        }
+
+        boundary = central_bottom;
+        for (int iZcell = iZ0; iZcell-- > 0; ) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < Pz; ++idZ) {
+            const scalar_t ak = hermite_data(idR, idZ, base + 3, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+
+          a0 = boundary - sum_plus;
+          hermite_data(idR, 0, base + 3, iRcell, iZcell) = a0;
+          boundary = a0 + sum_minus;
+        }
+      });
+  }
+
   template<class HermiteView, class PsiView>
   void computeFlux(const StructuredLocator& hermite_locator,
                    HermiteView hermite_data,
-                   PsiView psi_hermite_data, int component0 = 0)
+                   PsiView psi_hermite_data, int component0 = 0,
+                   int iR0 = -1,
+                   int iZ0 = -1)
   {
     static_assert(HermiteView::rank == 5,
                   "computeFlux expects rank-5 view: (idR,idZ,di,iR,iZ)");
@@ -369,27 +487,18 @@ struct Interpolator {
     // di - field component index: 0 - RB_R, 1 - RB_phi, 2 - RB_Z
     // iR - cell index in R
     // iZ - cell index in Z
-    // Subviews become rank-4: (idR, idZ, iR, iZ)
-    auto RBR = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0,
-                               Kokkos::ALL(), Kokkos::ALL());
-    auto RBZ = Kokkos::subview(hermite_data,
-                               Kokkos::ALL(), Kokkos::ALL(), component0 + 2,
-                               Kokkos::ALL(), Kokkos::ALL());
 
-    const int Pr   = RBZ.extent_int(0);  // # idR coefficients in RB_Z
-    const int Pz   = RBZ.extent_int(1);  // # idZ coefficients in RB_Z
-    const int nR   = RBZ.extent_int(2);  // # radial cells
-    const int nZ   = RBZ.extent_int(3);  // # axial cells
+    const int Pr   = hermite_data.extent_int(0);  // # idR coefficients in RB_Z
+    const int Pz   = hermite_data.extent_int(1);  // # idZ coefficients in RB_Z
+    const int nR   = hermite_data.extent_int(3);  // # radial cells
+    const int nZ   = hermite_data.extent_int(4);  // # axial cells
 
-    const int PrBR = RBR.extent_int(0);
-    const int PzBR = RBR.extent_int(1);
 
     const int PpsiR = psi_hermite_data.extent_int(0);
     const int PpsiZ = psi_hermite_data.extent_int(1);
 
-    const int iR0 = nR / 2;
-    const int iZ0 = nZ / 2;
+     if (iR0 < 0) iR0 = nR / 2;
+     if (iZ0 < 0) iZ0 = nZ / 2;
 
     const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
     const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
@@ -404,6 +513,8 @@ struct Interpolator {
     Kokkos::parallel_for("computeFlux_Z", policy_t({0, 0}, {nR, PpsiR}),
       KOKKOS_LAMBDA(const int iRcell, const int idR)
       {
+        int ifield = 0, component_stride = 3;
+        int base = component0 + ifield * component_stride;
         for (int iZcell = 0; iZcell < nZ; ++iZcell) {
           for (int idZ = 0; idZ < PpsiZ; ++idZ) {
             psi_hermite_data(idR, idZ, iRcell, iZcell) = scalar_t(0);
@@ -411,8 +522,8 @@ struct Interpolator {
 
           for (int idZ = 1; idZ < PpsiZ; ++idZ) {
             scalar_t val = scalar_t(0);
-            if (idR < PrBR && (idZ - 1) < PzBR) {
-              val = -hZ_s * RBR(idR, idZ - 1, iRcell, iZcell) /
+            if (idR < Pr && (idZ - 1) < Pz) {
+              val = -hZ_s * hermite_data(idR, idZ - 1, base, iRcell, iZcell) /
                     static_cast<scalar_t>(idZ);
             }
 
@@ -481,11 +592,13 @@ struct Interpolator {
     Kokkos::parallel_for("computeFlux_R", policy1D_t(0, nZ),
       KOKKOS_LAMBDA(const int iZcell)
       {
+        int ifield = 0, component_stride = 3;
+        int base = component0 + ifield * component_stride;
         for (int iRcell = 0; iRcell < nR; ++iRcell) {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t z_anchor_coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              z_anchor_coeff = eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half);
+              z_anchor_coeff = eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half);
             }
 
             psi_hermite_data(idR, 0, iRcell, iZcell) +=
@@ -501,7 +614,7 @@ struct Interpolator {
         for (int idR = 1; idR < PpsiR; ++idR) {
           scalar_t coeff = scalar_t(0);
           if ((idR - 1) < Pr) {
-            coeff = hR_s * eval_z_at(RBZ, idR - 1, iR0, iZ0, Pz, minus_half) /
+            coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iR0, iZ0, Pz, minus_half) /
                     static_cast<scalar_t>(idR);
           }
           sum_plus += coeff * p_plus;
@@ -522,7 +635,7 @@ struct Interpolator {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              coeff = hR_s * eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
                       static_cast<scalar_t>(idR);
             }
             sum_plus += coeff * p_plus;
@@ -545,7 +658,7 @@ struct Interpolator {
           for (int idR = 1; idR < PpsiR; ++idR) {
             scalar_t coeff = scalar_t(0);
             if ((idR - 1) < Pr) {
-              coeff = hR_s * eval_z_at(RBZ, idR - 1, iRcell, iZ0, Pz, minus_half) /
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
                       static_cast<scalar_t>(idR);
             }
             sum_plus += coeff * p_plus;
@@ -578,8 +691,207 @@ struct Interpolator {
 
     computeFlux(hermite_locator, hermite_data, psi, b_component0);
   }
+
+  // Phi-dependent flux: computes the poloidal flux function psi for each
+  // Fourier channel of a stride-`component_stride` field layout, storing the
+  // per-channel Hermite psi coefficients in a rank-5 view whose channel axis
+  // is contiguous (stride 1), ready for evalTaylorFourier. This mirrors the
+  // 2D computeFlux integration but with an outer ifield (Fourier channel)
+  // loop. Field slots read per channel: base+0 = R B_R, base+2 = R B_Z, with
+  // base = component0 + ifield * component_stride.
+  template<class HermiteView, class PsiView>
+  void computeFluxFourier(const StructuredLocator& hermite_locator,
+                   HermiteView hermite_data,
+                   PsiView psi_fourier_data,
+                   int component0,
+                   int nfields,
+                   int component_stride)
+  {
+    static_assert(HermiteView::rank == 5,
+                  "computeFluxFourier expects rank-5 view: (idR,idZ,di,iR,iZ)");
+    static_assert(PsiView::rank == 5,
+                  "computeFluxFourier expects rank-5 psi view: (idR,idZ,channel,iR,iZ)");
+
+    KOKKOS_ASSERT(component0 >= 0);
+    KOKKOS_ASSERT(component0 + (nfields - 1) * component_stride + 2 < hermite_data.extent_int(2));
+    KOKKOS_ASSERT(nfields <= psi_fourier_data.extent_int(2));
+
+    using scalar_t = typename HermiteView::non_const_value_type;
+
+    const int Pr   = hermite_data.extent_int(0);
+    const int Pz   = hermite_data.extent_int(1);
+    const int nR   = hermite_data.extent_int(3);
+    const int nZ   = hermite_data.extent_int(4);
+
+    const int PpsiR = psi_fourier_data.extent_int(0);
+    const int PpsiZ = psi_fourier_data.extent_int(1);
+
+    const int iR0 = nR / 2;
+    const int iZ0 = nZ / 2;
+
+    const scalar_t hR_s = static_cast<scalar_t>(hermite_locator.dR);
+    const scalar_t hZ_s = static_cast<scalar_t>(hermite_locator.dZ);
+    const scalar_t half = scalar_t(0.5);
+    const scalar_t minus_half = scalar_t(-0.5);
+
+    using exec_space = typename HermiteView::execution_space;
+    using policy_t   = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<3>>;
+    using policy2D_t = Kokkos::MDRangePolicy<exec_space, Kokkos::Rank<2>>;
+
+    // psi := - int_Zc^Z RB_R(R,Z') dZ'  (per Fourier channel)
+    Kokkos::parallel_for("computeFluxFourier_Z", policy_t({0, 0, 0}, {nfields, nR, PpsiR}),
+      KOKKOS_LAMBDA(const int ifield, const int iRcell, const int idR)
+      {
+        const int base = component0 + ifield * component_stride;
+        for (int iZcell = 0; iZcell < nZ; ++iZcell) {
+          for (int idZ = 0; idZ < PpsiZ; ++idZ) {
+            psi_fourier_data(idR, idZ, ifield, iRcell, iZcell) = scalar_t(0);
+          }
+
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            scalar_t val = scalar_t(0);
+            if (idR < Pr && (idZ - 1) < Pz) {
+              val = -hZ_s * hermite_data(idR, idZ - 1, base, iRcell, iZcell) /
+                    static_cast<scalar_t>(idZ);
+            }
+            psi_fourier_data(idR, idZ, ifield, iRcell, iZcell) = val;
+          }
+        }
+
+        scalar_t sum_plus = scalar_t(0);
+        scalar_t sum_minus = scalar_t(0);
+        scalar_t p_plus = half;
+        scalar_t p_minus = minus_half;
+        for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+          const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZ0);
+          sum_plus += ak * p_plus;
+          sum_minus += ak * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        scalar_t a0 = -sum_minus;
+        psi_fourier_data(idR, 0, ifield, iRcell, iZ0) = a0;
+        scalar_t boundary = a0 + sum_plus;
+
+        for (int iZcell = iZ0 + 1; iZcell < nZ; ++iZcell) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_minus;
+          psi_fourier_data(idR, 0, ifield, iRcell, iZcell) = a0;
+          boundary = a0 + sum_plus;
+        }
+
+        boundary = scalar_t(0);
+        for (int iZcell = iZ0; iZcell-- > 0; ) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idZ = 1; idZ < PpsiZ; ++idZ) {
+            const scalar_t ak = psi_fourier_data(idR, idZ, ifield, iRcell, iZcell);
+            sum_plus += ak * p_plus;
+            sum_minus += ak * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_plus;
+          psi_fourier_data(idR, 0, ifield, iRcell, iZcell) = a0;
+          boundary = a0 + sum_minus;
+        }
+      });
+
+    Kokkos::fence();
+
+    // psi += int_Rc RB_Z (R',Zc) dR'  (per Fourier channel)
+    Kokkos::parallel_for("computeFluxFourier_R", policy2D_t({0, 0}, {nfields, nZ}),
+      KOKKOS_LAMBDA(const int ifield, const int iZcell)
+      {
+        const int base = component0 + ifield * component_stride;
+        for (int iRcell = 0; iRcell < nR; ++iRcell) {
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t z_anchor_coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              z_anchor_coeff = eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half);
+            }
+            psi_fourier_data(idR, 0, ifield, iRcell, iZcell) +=
+                hR_s * z_anchor_coeff / static_cast<scalar_t>(idR);
+          }
+        }
+
+        scalar_t sum_plus = scalar_t(0);
+        scalar_t sum_minus = scalar_t(0);
+        scalar_t p_plus = half;
+        scalar_t p_minus = minus_half;
+        for (int idR = 1; idR < PpsiR; ++idR) {
+          scalar_t coeff = scalar_t(0);
+          if ((idR - 1) < Pr) {
+            coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iR0, iZ0, Pz, minus_half) /
+                    static_cast<scalar_t>(idR);
+          }
+          sum_plus += coeff * p_plus;
+          sum_minus += coeff * p_minus;
+          p_plus *= half;
+          p_minus *= minus_half;
+        }
+
+        scalar_t a0 = -sum_minus;
+        psi_fourier_data(0, 0, ifield, iR0, iZcell) += a0;
+        scalar_t boundary = a0 + sum_plus;
+
+        for (int iRcell = iR0 + 1; iRcell < nR; ++iRcell) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
+                      static_cast<scalar_t>(idR);
+            }
+            sum_plus += coeff * p_plus;
+            sum_minus += coeff * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_minus;
+          psi_fourier_data(0, 0, ifield, iRcell, iZcell) += a0;
+          boundary = a0 + sum_plus;
+        }
+
+        boundary = scalar_t(0);
+        for (int iRcell = iR0; iRcell-- > 0; ) {
+          sum_plus = scalar_t(0);
+          sum_minus = scalar_t(0);
+          p_plus = half;
+          p_minus = minus_half;
+          for (int idR = 1; idR < PpsiR; ++idR) {
+            scalar_t coeff = scalar_t(0);
+            if ((idR - 1) < Pr) {
+              coeff = hR_s * eval_z_at(hermite_data, idR - 1, base + 2, iRcell, iZ0, Pz, minus_half) /
+                      static_cast<scalar_t>(idR);
+            }
+            sum_plus += coeff * p_plus;
+            sum_minus += coeff * p_minus;
+            p_plus *= half;
+            p_minus *= minus_half;
+          }
+          a0 = boundary - sum_plus;
+          psi_fourier_data(0, 0, ifield, iRcell, iZcell) += a0;
+          boundary = a0 + sum_minus;
+        }
+      });
+  }
 };
-
-
 
 
